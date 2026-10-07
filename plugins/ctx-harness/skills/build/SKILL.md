@@ -11,7 +11,9 @@ Goal: the smallest context that saves more tokens than it costs. Everything an a
 Run `ctxh build-index --verify`.
 It creates `.ctx/` (this is what opts the repo in), scans tracked code files, resolves internal imports, ranks files by centrality, mines git history (churn, owners, co-change, fix/revert commits), detects build/lint/test commands from Makefiles, manifests and CI, and runs them to verify. Report the one-line summary it prints.
 
-If a detected command fails, read its `tail` in `.ctx/commands.json`. Fix the invocation only if the cause is obvious (missing flag, wrong runner); otherwise leave it unverified. Never install software or change the repo to make a command pass.
+If a detected command fails, read its `tail` in `.ctx/commands.json`. Fix the invocation only if the cause is obvious (missing flag, wrong runner): record it with `ctxh add-command <kind> "<fixed cmd>" --replaces "<failing cmd>"`, which verifies it and keeps it across re-index. Otherwise leave it unverified. Never install software or change the repo to make a command pass.
+
+If the index is dominated by fixtures, vendored samples or test data (`ctxh q hot` lists them), suggest a `.ctxignore` at the repo root (gitignore syntax) and re-run `ctxh build-index --verify`.
 
 ## 2. Map
 Run `ctxh skeleton`, then turn `.ctx/map.draft.md` into `.ctx/map.md`:

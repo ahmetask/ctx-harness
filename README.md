@@ -100,9 +100,20 @@ ctxh q tests repo.py
 ctxh stale                       # cards whose source files changed
 ctxh check                       # budgets, dead paths, unstamped anchors, instruction-like phrasing
 ctxh stats                       # harness vs baseline token medians and break-even
+ctxh add-command test "<cmd>" [--replaces "<detected cmd>"]   # keep a fixed or added command
 ```
 
-Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust and Ruby. Modules are grouped by folder.
+Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). Modules are grouped by folder.
+
+**What gets indexed.** Every file git tracks, except dependency and build folders, `testdata/`, and paths matched by a `.ctxignore` at the repo root. It uses gitignore syntax and keeps fixtures, vendored samples and test data out of the index and command detection:
+
+```gitignore
+bench/demo/template/
+fixtures/
+*_gen.py
+```
+
+**Commands.** `build-index` proposes build, lint and test commands from Makefiles, manifests and CI `run:` steps (installs, deploys and steps with `${{ }}` expressions are skipped). `--verify` runs them. When an agent fixes or adds one with `ctxh add-command`, it is stored as `source: manual`, survives re-index and is re-run by `--verify`. `--replaces` retires the detected command it fixes.
 
 ## Measuring against a baseline
 

@@ -3,6 +3,8 @@
 Each test builds a throwaway git repo and runs ctxh as a subprocess, the way
 Claude Code hooks and agents do.
 """
+import importlib.machinery
+import importlib.util
 import json
 import os
 import shutil
@@ -287,6 +289,190 @@ class Polyglot(unittest.TestCase):
             cmds = [c["cmd"] for c in json.loads((repo.root / ".ctx" / "commands.json").read_text())["commands"]]
             self.assertIn("cd svc && go test ./...", cmds)
             self.assertIn("npm test", cmds)
+        finally:
+            repo.cleanup()
+
+
+def load_ctxh():
+    """The engine as a module, for unit tests of pure helpers."""
+    loader = importlib.machinery.SourceFileLoader("ctxh_engine", str(CTXH))
+    spec = importlib.util.spec_from_loader("ctxh_engine", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+class Ignore(unittest.TestCase):
+    def test_ctxignore_excludes_fixtures_from_index_and_commands(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            write(repo.root, "fixtures/demo/go.mod", "module example.com/demo\n\ngo 1.22\n")
+            write(repo.root, "fixtures/demo/core/core.go", "package core\n\nfunc Hub() {}\n")
+            write(repo.root, "app/testdata/sample.py", "def Hub():\n    pass\n")
+            write(repo.root, "app/gen/schema_gen.py", "def Hub():\n    pass\n")
+            write(repo.root, ".ctxignore", "# fixtures\n/fixtures/\n*_gen.py\n")
+            repo.commit("fixtures")
+            repo.ctxh("build-index")
+            files = json.loads((repo.root / ".ctx" / "graph.json").read_text())["files"]
+            self.assertIn("app/orders/service.py", files)
+            for f in ("fixtures/demo/core/core.go", "app/testdata/sample.py", "app/gen/schema_gen.py"):
+                self.assertNotIn(f, files)
+            self.assertIn("no symbol matching 'Hub'", repo.ctxh("q", "find", "Hub").stdout)
+            cmds = [c["cmd"] for c in json.loads((repo.root / ".ctx" / "commands.json").read_text())["commands"]]
+            self.assertFalse([c for c in cmds if "go " in c], cmds)
+            self.assertTrue(all(f.startswith("app/") for f in repo.ctxh("q", "hot").stdout.split()[1::2]))
+            # edits to ignored files do not make the index lag
+            write(repo.root, "fixtures/demo/core/core.go", "package core\n\nfunc Hub2() {}\n")
+            repo.commit("touch fixture")
+            self.assertEqual("everything fresh", repo.ctxh("stale").stdout.strip())
+        finally:
+            repo.cleanup()
+
+    def test_pattern_semantics(self):
+        m = load_ctxh()
+        root = Path(tempfile.mkdtemp(prefix="ctxh-ignore-"))
+        try:
+            (root / ".ctxignore").write_text("docs/\n/top.py\n**/snap/**\n!keep_gen.py\n*_gen.py\nlib/*.js\n")
+            m.ROOT = root
+            rules = m.ignore_rules()
+            cases = {"docs/a.py": True, "x/docs/a.py": True, "docs.py": False, "top.py": True,
+                     "a/top.py": False, "a/snap/b/c.py": True, "a_gen.py": True, "x/keep_gen.py": True,
+                     "lib/a.js": True, "lib/x/a.js": False, "src/app.py": False}
+            for path, want in cases.items():
+                self.assertEqual(m.ignored(path, rules), want, path)
+            (root / ".ctxignore").write_text("*_gen.py\n!keep_gen.py\n")
+            self.assertFalse(m.ignored("x/keep_gen.py", m.ignore_rules()))  # last match wins
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class Shebang(unittest.TestCase):
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        write(self.repo.root, "bin/tool", """
+            #!/usr/bin/env python3
+            from app.orders.service import OrderService
+
+
+            def cmd_hook_stop(args):
+                return OrderService()
+        """)
+        write(self.repo.root, "scripts/deploy", "#!/bin/bash -e\n\nfunction ship_it {\n  :\n}\nrollback() {\n  :\n}\n")
+        write(self.repo.root, "NOTICE", "plain text, no shebang\n")
+        self.repo.commit("scripts")
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_extensionless_scripts_are_indexed(self):
+        files = json.loads((self.repo.root / ".ctx" / "graph.json").read_text())["files"]
+        self.assertEqual(files["bin/tool"]["lang"], "python")
+        self.assertEqual(files["scripts/deploy"]["lang"], "shell")
+        self.assertNotIn("NOTICE", files)
+        self.assertEqual("bin/tool:5", self.repo.ctxh("q", "find", "cmd_hook_stop").stdout.strip())
+        self.assertIn("scripts/deploy:3", self.repo.ctxh("q", "find", "ship_it").stdout)
+        self.assertIn("scripts/deploy:6", self.repo.ctxh("q", "find", "rollback").stdout)
+        self.assertIn("bin/tool", self.repo.ctxh("q", "rdeps", "service.py").stdout)
+
+    def test_edits_to_scripts_lag_the_index_and_need_review(self):
+        tool = self.repo.root / "bin/tool"
+        tool.write_text(tool.read_text() + "# change\n")
+        self.repo.commit("touch tool")
+        self.assertIn("index predates changes to 1 code files", self.repo.ctxh("stale").stdout)
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(tool)})])
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "s", "transcript_path": str(tp)})).stdout
+        self.assertEqual(json.loads(out)["decision"], "block")
+        transcript(tp, [("Edit", {"file_path": str(self.repo.root / "NOTICE")})])
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "s3", "transcript_path": str(tp)})).stdout
+        self.assertEqual(out, "")
+
+    def test_shebang_forms(self):
+        m = load_ctxh()
+        d = Path(tempfile.mkdtemp(prefix="ctxh-shebang-"))
+        try:
+            cases = {"#!/usr/bin/env python3\n": "python", "#!/usr/bin/python3.11 -u\n": "python",
+                     "#!/usr/bin/env -S node --no-warnings\n": "javascript", "#!/bin/sh\n": "shell",
+                     "#! /usr/bin/env ruby\n": "ruby", "#!/usr/bin/env perl\n": None, "hello\n": None,
+                     "#!/usr/bin/shellcheck\n": None}
+            for i, (first, want) in enumerate(cases.items()):
+                (d / f"s{i}").write_text(first + "body\n")
+                self.assertEqual(m.shebang_lang(d / f"s{i}"), want, first)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class CICommands(unittest.TestCase):
+    def test_ci_run_lines_become_candidates(self):
+        repo = Repo()
+        try:
+            write(repo.root, "lib/core.py", "def f():\n    return 1\n")
+            write(repo.root, "tests/test_core.py", "import unittest\n\n\nclass T(unittest.TestCase):\n"
+                  "    def test_f(self):\n        pass\n")
+            write(repo.root, ".github/workflows/ci.yml", """
+                on: push
+                jobs:
+                  t:
+                    steps:
+                      - run: pip install -r requirements.txt
+                      - run: npm install -g some-cli
+                      - run: python3 -m unittest discover -s tests
+                      - run: echo "${{ secrets.TOKEN }}" | docker login
+                      - name: lint
+                        run: |
+                          cd lib
+                          python3 -m pyflakes . \\
+                            --quiet
+                          go vet ./...
+                      - run: docker push example/image
+            """)
+            repo.commit("init")
+            repo.ctxh("build-index", "--verify")
+            data = json.loads((repo.root / ".ctx" / "commands.json").read_text())
+            by = {c["cmd"]: c for c in data["commands"]}
+            self.assertIn("cd lib && python3 -m pyflakes . --quiet", data["ci_runs"])
+            ut = by["python3 -m unittest discover -s tests"]
+            self.assertEqual((ut["source"], ut["in_ci"], ut["kind"], ut["verified"]), ("ci", True, "test", True))
+            self.assertEqual(by["cd lib && go vet ./..."]["kind"], "lint")
+            for c in by:
+                self.assertNotRegex(c, r"install|docker|echo|pyflakes")
+        finally:
+            repo.cleanup()
+
+
+class ManualCommands(unittest.TestCase):
+    def test_manual_command_survives_reindex_and_is_reverified(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            write(repo.root, "Makefile", "test:\n\tfalse\n\nlint:\n\ttrue\n")
+            repo.commit("broken make test")
+            repo.ctxh("build-index", "--verify")
+            out = repo.ctxh("add-command", "test", "true && echo fixed", "--replaces", "make test").stdout
+            self.assertIn("verified", out)
+            repo.ctxh("add-command", "build", "exit 3")
+            repo.ctxh("build-index")  # a plain re-index keeps both, and their results
+            cmds = {c["cmd"]: c for c in json.loads((repo.root / ".ctx" / "commands.json").read_text())["commands"]}
+            self.assertNotIn("make test", cmds)  # replaced by the fixed invocation
+            self.assertTrue(cmds["true && echo fixed"]["verified"])
+            self.assertEqual(cmds["true && echo fixed"]["source"], "manual")
+            self.assertFalse(cmds["exit 3"]["verified"])
+            # --verify re-runs manual commands too
+            cmds_path = repo.root / ".ctx" / "commands.json"
+            data = json.loads(cmds_path.read_text())
+            for c in data["commands"]:
+                c["verified"] = None
+            cmds_path.write_text(json.dumps(data))
+            repo.ctxh("build-index", "--verify")
+            cmds = {c["cmd"]: c for c in json.loads(cmds_path.read_text())["commands"]}
+            self.assertTrue(cmds["true && echo fixed"]["verified"])
+            self.assertEqual(cmds["exit 3"]["exit"], 3)
+            repo.ctxh("skeleton")
+            self.assertIn("`true && echo fixed`", (repo.root / ".ctx" / "map.draft.md").read_text())
+            self.assertNotEqual(repo.ctxh("add-command", "bogus", "x", check=False).returncode, 0)
         finally:
             repo.cleanup()
 

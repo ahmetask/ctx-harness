@@ -1,0 +1,4 @@
+# Paths ctxh leaves out of the index and command detection (gitignore syntax).
+# The benchmark's demo repo and task fixtures are data for bench/run.py, not this repo's code.
+bench/demo/template/
+bench/tasks/

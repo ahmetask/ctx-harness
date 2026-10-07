@@ -5,5 +5,15 @@
   "claude plugin validate .",
   "claude plugin validate ./plugins/ctx-harness"
  ],
- "commands": []
+ "commands": [
+  {
+   "cmd": "python -m unittest discover -s tests -v",
+   "exit": 0,
+   "in_ci": true,
+   "kind": "test",
+   "seconds": 59.4,
+   "source": "ci",
+   "verified": true
+  }
+ ]
 }
