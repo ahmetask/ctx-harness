@@ -41,6 +41,10 @@ class AgentResult:
 def clean_env(**overrides):
     """The caller's environment without harness switches, so runs don't inherit them."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("CTXH_", "CTX_", "CLAUDE_PROJECT_DIR"))}
+    # Launched from inside a Claude Code session, a child `claude` would otherwise reuse the parent's
+    # session id, and find_transcript could pick the parent's transcript.
+    for k in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID"):
+        env.pop(k, None)
     env.setdefault("GOTOOLCHAIN", "local")
     env.update(overrides)
     return env
