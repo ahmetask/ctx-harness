@@ -14,18 +14,23 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh stale                    what changed since cards / index were built
   ctxh check                    enforce budgets and catch dead paths in map, cards, learned
   ctxh signals                  aggregate agent traces into promotion candidates (curator input)
-  ctxh usage <transcript.jsonl> [--label L] [--task T]   tokens/steps of any Claude Code session
+  ctxh usage <transcript> [--label L] [--task T]   tokens/steps of any agent session
   ctxh stats                    harness vs baseline comparison
   ctxh version
-  ctxh hook-start | hook-prompt | hook-stop   Claude Code hook entry points
+  ctxh hook-start | hook-prompt | hook-stop   agent hook entry points
+
+The engine is tool-neutral. What a coding agent hands its hooks, how a hook answers and what a
+session transcript looks like live in an adapter (adapters/<tool>.py, see adapters/README.md).
 
 Environment:
   CTXH_DISABLED=1     turn the harness off for a session (baseline runs)
   CTXH_TASK=<name>    label a session's metrics for paired harness/baseline comparisons
   CTXH_REVIEW_GATE=0  skip the Stop-hook check that a reviewer ran after the last code edit
   CTXH_PLAN_GATE=0    skip the Stop-hook check that a 3+ file change was planned first
+  CTXH_TOOL=<name>    agent adapter to use (default: claude)
 """
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -45,8 +50,23 @@ def env(name, default=None):
     return os.environ.get(f"CTXH_{name}", os.environ.get(f"CTX_{name}", default))
 
 
+def load_adapter(name):
+    """The agent adapter module adapters/<name>.py; the engine talks to the agent only through it."""
+    path = PLUGIN_ROOT / "adapters" / f"{name}.py"
+    if not re.fullmatch(r"[a-z0-9_]+", name or "") or not path.is_file():
+        have = sorted(p.stem for p in (PLUGIN_ROOT / "adapters").glob("*.py"))
+        sys.exit(f"ctxh: no adapter '{name}' (CTXH_TOOL); available: {', '.join(have) or 'none'}")
+    spec = importlib.util.spec_from_file_location(f"ctxh_adapter_{name}", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ADAPTER = load_adapter(env("TOOL", "claude"))
+
+
 def find_root() -> Path:
-    project = os.environ.get("CLAUDE_PROJECT_DIR")
+    project = ADAPTER.project_dir()
     if project:
         return Path(project).resolve()
     p = Path.cwd().resolve()
@@ -123,17 +143,6 @@ SYMBOL_RX = {
 }
 SYMBOL_RX["typescript"] = SYMBOL_RX["javascript"]
 SYMBOL_RX["kotlin"] = re.compile(r"^[ \t]*(?:\w+[ \t]+)*(?:fun|class|interface|object)\s+(\w+)", re.M)
-
-# The one place Claude Code's tool names live: the transcript parser and the review gate read them
-# from here, so a rename is a one-line change (and an adapter seam for other agents later).
-TOOLS = {
-    "read": ("Read", "NotebookRead"),
-    "edit": ("Edit", "Write", "MultiEdit", "NotebookEdit"),
-    "shell": ("Bash",),
-    "subagent": ("Task", "Agent"),
-}
-KNOWN_TOOLS = {name for names in TOOLS.values() for name in names}
-
 
 # ---------------------------------------------------------------- helpers
 def sh(cmd, timeout=60, cwd=None):
@@ -921,58 +930,28 @@ def cmd_check(_):
 
 # ---------------------------------------------------------------- transcripts, traces, metrics
 def parse_transcript(path: Path):
-    usage_by_msg, tool_uses, results = {}, {}, {}
-    seen = {"assistant": 0, "version": ""}  # for the format guard, see transcript_warning
-    if not path.exists():
+    """Tokens, steps, files and commands of one session, from the adapter's normalized trace."""
+    trace = ADAPTER.read_session(path)
+    if trace is None:
         return None
-
-    def ingest(p, bucket):
-        for line in p.read_text(errors="ignore").splitlines():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            msg = e.get("message") or {}
-            content = msg.get("content") if isinstance(msg.get("content"), list) else []
-            side = bucket if bucket == "sub" or not e.get("isSidechain") else "sub"
-            if e.get("version"):
-                seen["version"] = str(e["version"])
-            if e.get("type") == "assistant":
-                seen["assistant"] += 1
-            if e.get("type") == "assistant" and msg.get("usage"):
-                usage_by_msg[(side, msg.get("id") or e.get("uuid"))] = msg["usage"]
-            for c in content:
-                if c.get("type") == "tool_use":
-                    tool_uses[c.get("id")] = (side, c.get("name"), c.get("input") or {})
-                elif c.get("type") == "tool_result":
-                    body = c.get("content")
-                    if isinstance(body, list):
-                        body = " ".join(x.get("text", "") for x in body if isinstance(x, dict))
-                    results[c.get("tool_use_id")] = (bool(c.get("is_error")), str(body or "")[:300])
-
-    ingest(path, "main")
-    subdir = path.with_suffix("") / "subagents"
-    if subdir.is_dir():
-        for p in subdir.glob("*.jsonl"):
-            ingest(p, "sub")
+    usage_keys = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
     tok = {"main": Counter(), "sub": Counter()}
-    for (side, _), u in usage_by_msg.items():
-        for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-            tok[side][k] += u.get(k) or 0
+    for u in trace["usage"]:
+        for k in usage_keys:
+            tok[u["side"]][k] += u.get(k) or 0
+    main = [c for c in trace["calls"] if c["side"] == "main"]
     reads, edits, cmds, failed, ctx_q, misses, agents = [], [], [], [], [], [], Counter()
     unknown = Counter()
-    for tid, (side, name, inp) in tool_uses.items():
-        err, body = results.get(tid, (False, ""))
-        if side != "main":
-            continue
-        if name not in KNOWN_TOOLS:
-            unknown[name or "?"] += 1
-        if name in TOOLS["read"]:
-            reads.append(inp.get("file_path", ""))
-        elif name in TOOLS["edit"]:
-            edits.append(inp.get("file_path", ""))
-        elif name in TOOLS["shell"]:
-            c = inp.get("command", "")
+    for call in main:
+        kind, err, body = call["kind"], call["error"], call["output"]
+        if kind is None:
+            unknown[call["tool"] or "?"] += 1
+        elif kind == "read":
+            reads.append(call["path"])
+        elif kind == "edit":
+            edits.append(call["path"])
+        elif kind == "shell":
+            c = call["command"]
             cmds.append(c[:200])
             if re.search(r"(^|[\s/;&|(])ctxh?\s+q\s", c):
                 ctx_q.append(c[:120])
@@ -980,38 +959,37 @@ def parse_transcript(path: Path):
                     misses.append(c[:120])
             if err:
                 failed.append({"cmd": c[:200], "out": body[:200]})
-        elif name in TOOLS["subagent"]:
-            agents[inp.get("subagent_type", "general")] += 1
+        elif kind == "subagent":
+            agents[call["agent"] or "general"] += 1
     rel = lambda p: os.path.relpath(p, ROOT) if p and os.path.isabs(p) else p
-    steps = sum(1 for s, _, _ in tool_uses.values() if s == "main")
 
     def total(c):
-        return c["input_tokens"] + c["output_tokens"] + c["cache_read_input_tokens"] + c["cache_creation_input_tokens"]
+        return sum(c[k] for k in usage_keys)
 
     return {
         "tokens_main": dict(tok["main"]), "tokens_sub": dict(tok["sub"]),
         "tokens_total": total(tok["main"]) + total(tok["sub"]),
         "tokens_uncached": sum(tok[s]["input_tokens"] + tok[s]["output_tokens"] + tok[s]["cache_creation_input_tokens"]
                                for s in tok),
-        "steps": steps,
+        "steps": len(main),
         "files_read": sorted({rel(p) for p in reads}), "files_edited": sorted({rel(p) for p in edits}),
         "commands": cmds, "failed_commands": failed, "ctx_queries": ctx_q, "ctx_misses": misses,
         "subagents": dict(agents),
-        "assistant_messages": seen["assistant"], "usage_messages": len(usage_by_msg),
-        "known_tool_calls": steps - sum(unknown.values()), "unknown_tools": [n for n, _ in unknown.most_common()],
-        "tool_version": seen["version"],
+        "assistant_messages": trace["assistant_messages"], "usage_messages": len(trace["usage"]),
+        "known_tool_calls": len(main) - sum(unknown.values()), "unknown_tools": [n for n, _ in unknown.most_common()],
+        "tool_version": trace["tool_version"],
     }
 
 
 def transcript_warning(data):
     """One sentence saying why a transcript parsed to nothing usable, else None.
 
-    Everything measured here (tokens, traces, the review gate) is read out of Claude Code's
-    transcript JSONL. When that format moves, the honest failure is a warning, not a row of zeros.
+    Everything measured here (tokens, traces, the review gate) is read out of the agent's session
+    transcript. When that format moves, the honest failure is a warning, not a row of zeros.
     """
     if not data:
         return None
-    where = f"transcript written by Claude Code {data['tool_version']}" if data["tool_version"] else "transcript"
+    where = f"transcript written by {ADAPTER.LABEL} {data['tool_version']}" if data["tool_version"] else "transcript"
     if not data["usage_messages"]:
         if not data["assistant_messages"]:
             return f"no assistant messages in this {where}: nothing to measure"
@@ -1153,22 +1131,19 @@ def refresh_in_background():
         subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "build-index", "--quiet", "--release-lock"],
                          cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True,
-                         env={**os.environ, "CLAUDE_PROJECT_DIR": str(ROOT)})
+                         env={**os.environ, **ADAPTER.child_env(ROOT)})
     except OSError:
         pass
 
 
 def cmd_hook_start(_):
-    try:
-        json.load(sys.stdin)
-    except ValueError:
-        pass
+    ADAPTER.read_event(sys.stdin)
     if env("DISABLED") == "1":
         return
     if not opted_in():
         if (ROOT / ".git").exists():
-            print("ctx-harness: this repo has no harness context (.ctx/). "
-                  "If the user wants it, the build skill (/ctx-harness:build) creates it.")
+            ADAPTER.emit_context("ctx-harness: this repo has no harness context (.ctx/). "
+                                 "If the user wants it, the build skill (/ctx-harness:build) creates it.")
         return
     out = []
     proto = PROTOCOL_OVERRIDE if PROTOCOL_OVERRIDE.exists() else PROTOCOL_DEFAULT
@@ -1188,15 +1163,12 @@ def cmd_hook_start(_):
     active = CTX / "tasks" / "active.md"
     if active.exists() and active.read_text().strip():
         out.append("Active plan exists: .ctx/tasks/active.md (read it first).")
-    print("\n\n".join(out))
+    ADAPTER.emit_context("\n\n".join(out))
 
 
 def cmd_hook_prompt(_):
     """Recite the two rules agents most often skip, right where the next decision is made."""
-    try:
-        json.load(sys.stdin)
-    except ValueError:
-        pass
+    ADAPTER.read_event(sys.stdin)
     if env("DISABLED") == "1" or not opted_in():
         return
     lines = ["ctx-harness: if this request means changing 3+ files, call ctx-harness:planner first and wait for "
@@ -1205,46 +1177,34 @@ def cmd_hook_prompt(_):
     active = CTX / "tasks" / "active.md"
     if active.exists() and active.read_text().strip():
         lines.append("Active plan: .ctx/tasks/active.md")
-    print("\n".join(lines))
+    ADAPTER.emit_context("\n".join(lines))
 
 
 def session_edits(path: Path):
     """What the gates need from a transcript: the code the main session changed, and who it called.
 
     files: distinct repo-relative code files edited, in the order first touched.
-    last_edit: tool_use id of the last code edit (what both gates key their block-once state on).
+    last_edit: id of the last code edit's tool call (what both gates key their block-once state on).
     reviewed_after: a reviewer subagent ran after that edit. planner: a planner subagent ran at all.
     """
     info = {"files": [], "last_edit": None, "reviewed_after": False, "planner": False}
-    try:
-        lines = path.read_text(errors="ignore").splitlines()
-    except OSError:
-        return info
-    for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
+    trace = ADAPTER.read_session(path)
+    for call in trace["calls"] if trace else []:
+        if call["side"] != "main":
             continue
-        if e.get("isSidechain") or e.get("type") != "assistant":
-            continue
-        content = (e.get("message") or {}).get("content")
-        for c in content if isinstance(content, list) else []:
-            if c.get("type") != "tool_use":
-                continue
-            name, inp = c.get("name"), c.get("input") or {}
-            if name in TOOLS["edit"]:
-                f = inp.get("file_path") or inp.get("notebook_path") or ""
-                rel = os.path.relpath(f, ROOT) if os.path.isabs(f) else f
-                if f and not rel.startswith((".ctx", "..")) and lang_of(rel):
-                    info["last_edit"], info["reviewed_after"] = c.get("id"), False
-                    if rel not in info["files"]:
-                        info["files"].append(rel)
-            elif name in TOOLS["subagent"]:
-                kind = str(inp.get("subagent_type", ""))
-                if kind.endswith("reviewer"):
-                    info["reviewed_after"] = True
-                elif kind.endswith("planner"):
-                    info["planner"] = True
+        if call["kind"] == "edit":
+            f = call["path"]
+            rel = os.path.relpath(f, ROOT) if os.path.isabs(f) else f
+            if f and not rel.startswith((".ctx", "..")) and lang_of(rel):
+                info["last_edit"], info["reviewed_after"] = call["id"], False
+                if rel not in info["files"]:
+                    info["files"].append(rel)
+        elif call["kind"] == "subagent":
+            kind = str(call["agent"] or "")
+            if kind.endswith("reviewer"):
+                info["reviewed_after"] = True
+            elif kind.endswith("planner"):
+                info["planner"] = True
     return info
 
 
@@ -1280,21 +1240,15 @@ def gate_once(session, key, value):
 
 
 def cmd_hook_stop(_):
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError:
+    event = ADAPTER.read_event(sys.stdin)
+    if not event or not opted_in() or not event["transcript"]:
         return
-    if not opted_in():
-        return
-    tp = payload.get("transcript_path")
-    if not tp:
-        return
-    path = Path(tp).expanduser()
+    path = event["transcript"]
     data = parse_transcript(path)
     if not data:
         return
     disabled = env("DISABLED") == "1"
-    session = payload.get("session_id") or path.stem
+    session = event["session"] or path.stem
     warning = transcript_warning(data)
     if warning:
         warn_once("transcript", warning)
@@ -1306,20 +1260,20 @@ def cmd_hook_stop(_):
     if env("PLAN_GATE", "1") != "0":  # plan first, review second: the same order the protocol asks for
         reason = plan_gate_reason(info)
         if reason and gate_once(session, "blocked_plan", info["last_edit"]):
-            print(json.dumps({"decision": "block", "reason": reason}))
+            ADAPTER.emit_block(reason)
             return
     if env("REVIEW_GATE", "1") == "0":
         return
     edit = None if info["reviewed_after"] else info["last_edit"]
     if edit and gate_once(session, "blocked_edit", edit):  # block once per edit, never loop
-        print(json.dumps({"decision": "block", "reason": (
+        ADAPTER.emit_block(
             "ctx-harness review gate: code changed since the last ctx-harness:reviewer run. Run the reviewer "
             "on the diff (at most 2 rounds), record its findings in the plan's progress log, run `ctxh stale`, "
-            "then finish. If the user explicitly said to skip review, say so and finish.")}))
+            "then finish. If the user explicitly said to skip review, say so and finish.")
 
 
 def cmd_version(_):
-    print(f"ctxh {VERSION} (plugin root: {PLUGIN_ROOT}, repo root: {ROOT})")
+    print(f"ctxh {VERSION} (plugin root: {PLUGIN_ROOT}, repo root: {ROOT}, adapter: {ADAPTER.NAME})")
 
 
 COMMANDS_MAP = {

@@ -113,6 +113,8 @@ fixtures/
 *_gen.py
 ```
 
+**Agent adapters.** The engine itself is tool-neutral. Where the project root comes from, what a hook receives and how it answers, how a session log is read and which tool names mean read, edit, shell or subagent all live in one adapter module, [`plugins/ctx-harness/adapters/claude.py`](plugins/ctx-harness/adapters/claude.py) for Claude Code. Supporting another agent means writing one more adapter; [the adapters README](plugins/ctx-harness/adapters/README.md) has the interface.
+
 **Commands.** `build-index` proposes build, lint and test commands from Makefiles, manifests and CI `run:` steps (installs, deploys and steps with `${{ }}` expressions are skipped). `--verify` runs them. When an agent fixes or adds one with `ctxh add-command`, it is stored as `source: manual`, survives re-index and is re-run by `--verify`. `--replaces` retires the detected command it fixes.
 
 ## Measuring against a baseline
@@ -152,6 +154,7 @@ Curation should follow merges, not run during a task. Options:
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
 | `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check |
 | `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
+| `CTXH_TOOL=<name>` | Agent adapter to load from `plugins/ctx-harness/adapters/` (default `claude`) |
 
 ## Development
 
@@ -168,6 +171,6 @@ To verify a change on a realistic repo, `bench/sandbox.py` materializes the shop
 ## Limits
 
 - **Parsing:** import and symbol parsing is regex-based. Tree-sitter would make it more precise.
-- **Token accounting:** reads Claude Code's transcript format, which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
+- **Token accounting:** reads Claude Code's transcript format (in its adapter), which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
 - **Local traces:** traces stay on each machine. For team-wide curation, ship them to a shared store, such as Redis, and point the curator there.
 - **Gates fire at the end:** both the plan and review checks run in the Stop hook, so they catch an unplanned or unreviewed change when the session tries to finish rather than when it starts. A PreToolUse gate would interrupt mid-change; this costs a turn instead.

@@ -613,5 +613,93 @@ class TranscriptFixtures(unittest.TestCase):
         self.assertFalse((self.repo.root / ".ctx" / "metrics").exists())
 
 
+TOY_ADAPTER = """
+import json
+from pathlib import Path
+
+NAME, LABEL = "toy", "Toy Agent"
+TOOLS = {"read": ("view",), "edit": ("str_replace_editor",), "shell": ("run",), "subagent": ("delegate",)}
+KIND_OF = {n: k for k, names in TOOLS.items() for n in names}
+
+
+def project_dir():
+    return None
+
+
+def child_env(root):
+    return {}
+
+
+def read_event(stream):
+    e = json.load(stream)
+    return {"session": e.get("id"), "transcript": Path(e["log"]) if e.get("log") else None}
+
+
+def emit_context(text):
+    print("CTX:" + text)
+
+
+def emit_block(reason):
+    print("BLOCK:" + reason)
+
+
+def read_session(path):
+    calls = []
+    for i, line in enumerate(path.read_text().splitlines()):
+        tool, arg = line.split(" ", 1)
+        calls.append({"id": str(i), "side": "main", "tool": tool, "kind": KIND_OF.get(tool), "path": arg,
+                      "command": arg, "agent": arg, "error": False, "output": ""})
+    return {"tool_version": "9", "assistant_messages": len(calls),
+            "usage": [{"side": "main", "input_tokens": 10, "output_tokens": 5}], "calls": calls}
+"""
+
+
+class Adapters(unittest.TestCase):
+    """The engine is tool-neutral: everything agent-specific comes from plugins/ctx-harness/adapters/."""
+
+    def test_core_holds_no_claude_code_specifics(self):
+        core = CTXH.read_text()
+        for needle in ("CLAUDE_", "isSidechain", "tool_use", '"decision"', '"Bash"', '"Edit"', "subagent_type"):
+            self.assertNotIn(needle, core)
+
+    def test_unknown_adapter_names_the_available_ones(self):
+        repo = Repo()
+        try:
+            r = repo.ctxh("version", env={"CTXH_TOOL": "nope"}, check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("available: claude", r.stderr)
+            self.assertIn("adapter: claude", repo.ctxh("version").stdout)
+        finally:
+            repo.cleanup()
+
+    def test_another_adapter_drives_hooks_metrics_and_gates(self):
+        repo = Repo()
+        plugin = Path(tempfile.mkdtemp(prefix="ctxh-plugin-")) / "ctx-harness"
+        try:
+            shutil.copytree(CTXH.parents[1], plugin, ignore=shutil.ignore_patterns("__pycache__"))
+            (plugin / "adapters" / "toy.py").write_text(TOY_ADAPTER)
+            python_app(repo)
+            repo.ctxh("build-index")
+            log = repo.root / "toy.log"
+            log.write_text(f"view app/orders/service.py\nstr_replace_editor {repo.root}/app/orders/service.py\n"
+                           "run ctxh q find OrderService\n")
+            run = lambda cmd, stdin="": subprocess.run(
+                [sys.executable, str(plugin / "bin" / "ctxh"), cmd], cwd=repo.root, input=stdin, text=True,
+                capture_output=True, env=repo.env({"CTXH_TOOL": "toy"}))
+            self.assertTrue(run("hook-start", "{}").stdout.startswith("CTX:"))
+            stop = run("hook-stop", json.dumps({"id": "toy1", "log": str(log)}))
+            self.assertTrue(stop.stdout.startswith("BLOCK:ctx-harness review gate"), stop.stdout + stop.stderr)
+            m = json.loads((repo.root / ".ctx" / "metrics" / "toy1.json").read_text())
+            self.assertEqual((m["tokens_total"], m["steps"], m["tool_version"]), (15, 3, "9"))
+            t = json.loads((repo.root / ".ctx" / "traces" / "toy1.json").read_text())
+            self.assertEqual(t["files_edited"], ["app/orders/service.py"])
+            self.assertEqual(t["ctx_queries"], ["ctxh q find OrderService"])
+            log.write_text(log.read_text() + "delegate ctx-harness:reviewer\n")
+            self.assertEqual(run("hook-stop", json.dumps({"id": "toy2", "log": str(log)})).stdout, "")
+        finally:
+            repo.cleanup()
+            shutil.rmtree(plugin.parent, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
