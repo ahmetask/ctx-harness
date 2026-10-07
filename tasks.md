@@ -20,7 +20,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T03 | Keep hand-verified commands across re-index | dogfooding | P1 | done |
 | T04 | Module grouping and markdown-only modules | dogfooding | P2 | todo |
 | T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | todo |
-| T06 | Transcript parser fixtures and version guard | measurement | P1 | todo |
+| T06 | Transcript parser fixtures and version guard | measurement | P1 | done |
 | T07 | Benchmark platform with a demo repo | measurement | P1 | done |
 | T08 | Mid-session context management (compaction) | context | P2 | todo |
 | T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | todo |
@@ -69,9 +69,8 @@ Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before ch
 
 ## Measurement
 
-### T06 · Transcript parser fixtures and version guard
-- **Problem:** token accounting and the review gate depend on Claude Code's transcript JSONL format (`usage`, `isSidechain`, `subagents/`, tool names). A format change silently zeroes metrics or disables the gate.
-- **Done when:** checked-in fixture transcripts (main session plus subagent) have tests that assert the parsed tokens, files, commands and gate decision. `ctxh usage` and the Stop hook warn, once, when a transcript yields no usage or no recognized tool calls instead of recording zeros.
+### T06 · Transcript parser fixtures and version guard (done)
+Fixtures in `tests/fixtures/transcripts/` (a session with a subagent, a reviewed session, and two drifted formats) pin tokens, files, commands and the gate decision. Tool names live in one `TOOLS` table, and a transcript with no `usage` or no known tool name makes `ctxh usage` fail and the Stop hook warn once instead of recording zeros. See `.ctx/tasks/done/T06-transcript-fixtures.md`.
 
 ### T07 · Benchmark platform with a demo repo (done)
 - Built `bench/`: a Go demo repo (`shopd`) with scripted history, 6 tasks with hidden checks and reference solutions, a runner (`claude`, `fake` and `noop` agents) and a report. See `bench/README.md` and `.ctx/tasks/done/T07-benchmark-platform.md`.

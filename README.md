@@ -135,6 +135,8 @@ ctxh stats
 
 Sessions labeled `bootstrap` or `curate` count as overhead, and `stats` amortizes them into a break-even estimate. Run several tasks, a few times each; single runs are noisy.
 
+All of this is read out of Claude Code's transcript JSONL, so a format change could zero the numbers and switch the review gate off without anyone noticing. Checked-in fixtures in [tests/fixtures/transcripts](tests/fixtures/transcripts) pin the parse, and when a real transcript yields no `usage` or no tool name the engine knows, `ctxh usage` fails with the reason and the Stop hook warns once on stderr instead of recording a row of zeros.
+
 ## Automating curation
 
 Curation should follow merges, not run during a task. Options:
@@ -162,6 +164,6 @@ claude --plugin-dir ./plugins/ctx-harness  # try local changes without installin
 ## Limits
 
 - **Parsing:** import and symbol parsing is regex-based. Tree-sitter would make it more precise.
-- **Token accounting:** reads Claude Code's transcript format, which can change between versions.
+- **Token accounting:** reads Claude Code's transcript format, which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
 - **Local traces:** traces stay on each machine. For team-wide curation, ship them to a shared store, such as Redis, and point the curator there.
 - **Planner trigger:** the planner rule is enforced only by instructions plus the per-prompt reminder. The reviewer is the only step a hook checks.

@@ -122,6 +122,16 @@ SYMBOL_RX = {
 SYMBOL_RX["typescript"] = SYMBOL_RX["javascript"]
 SYMBOL_RX["kotlin"] = re.compile(r"^[ \t]*(?:\w+[ \t]+)*(?:fun|class|interface|object)\s+(\w+)", re.M)
 
+# The one place Claude Code's tool names live: the transcript parser and the review gate read them
+# from here, so a rename is a one-line change (and an adapter seam for other agents later).
+TOOLS = {
+    "read": ("Read", "NotebookRead"),
+    "edit": ("Edit", "Write", "MultiEdit", "NotebookEdit"),
+    "shell": ("Bash",),
+    "subagent": ("Task", "Agent"),
+}
+KNOWN_TOOLS = {name for names in TOOLS.values() for name in names}
+
 
 # ---------------------------------------------------------------- helpers
 def sh(cmd, timeout=60, cwd=None):
@@ -910,6 +920,7 @@ def cmd_check(_):
 # ---------------------------------------------------------------- transcripts, traces, metrics
 def parse_transcript(path: Path):
     usage_by_msg, tool_uses, results = {}, {}, {}
+    seen = {"assistant": 0, "version": ""}  # for the format guard, see transcript_warning
     if not path.exists():
         return None
 
@@ -922,6 +933,10 @@ def parse_transcript(path: Path):
             msg = e.get("message") or {}
             content = msg.get("content") if isinstance(msg.get("content"), list) else []
             side = bucket if bucket == "sub" or not e.get("isSidechain") else "sub"
+            if e.get("version"):
+                seen["version"] = str(e["version"])
+            if e.get("type") == "assistant":
+                seen["assistant"] += 1
             if e.get("type") == "assistant" and msg.get("usage"):
                 usage_by_msg[(side, msg.get("id") or e.get("uuid"))] = msg["usage"]
             for c in content:
@@ -943,15 +958,18 @@ def parse_transcript(path: Path):
         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
             tok[side][k] += u.get(k) or 0
     reads, edits, cmds, failed, ctx_q, misses, agents = [], [], [], [], [], [], Counter()
+    unknown = Counter()
     for tid, (side, name, inp) in tool_uses.items():
         err, body = results.get(tid, (False, ""))
         if side != "main":
             continue
-        if name in ("Read", "NotebookRead"):
+        if name not in KNOWN_TOOLS:
+            unknown[name or "?"] += 1
+        if name in TOOLS["read"]:
             reads.append(inp.get("file_path", ""))
-        elif name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+        elif name in TOOLS["edit"]:
             edits.append(inp.get("file_path", ""))
-        elif name == "Bash":
+        elif name in TOOLS["shell"]:
             c = inp.get("command", "")
             cmds.append(c[:200])
             if re.search(r"(^|[\s/;&|(])ctxh?\s+q\s", c):
@@ -960,9 +978,10 @@ def parse_transcript(path: Path):
                     misses.append(c[:120])
             if err:
                 failed.append({"cmd": c[:200], "out": body[:200]})
-        elif name in ("Task", "Agent"):
+        elif name in TOOLS["subagent"]:
             agents[inp.get("subagent_type", "general")] += 1
     rel = lambda p: os.path.relpath(p, ROOT) if p and os.path.isabs(p) else p
+    steps = sum(1 for s, _, _ in tool_uses.values() if s == "main")
 
     def total(c):
         return c["input_tokens"] + c["output_tokens"] + c["cache_read_input_tokens"] + c["cache_creation_input_tokens"]
@@ -972,18 +991,54 @@ def parse_transcript(path: Path):
         "tokens_total": total(tok["main"]) + total(tok["sub"]),
         "tokens_uncached": sum(tok[s]["input_tokens"] + tok[s]["output_tokens"] + tok[s]["cache_creation_input_tokens"]
                                for s in tok),
-        "steps": sum(1 for s, _, _ in tool_uses.values() if s == "main"),
+        "steps": steps,
         "files_read": sorted({rel(p) for p in reads}), "files_edited": sorted({rel(p) for p in edits}),
         "commands": cmds, "failed_commands": failed, "ctx_queries": ctx_q, "ctx_misses": misses,
         "subagents": dict(agents),
+        "assistant_messages": seen["assistant"], "usage_messages": len(usage_by_msg),
+        "known_tool_calls": steps - sum(unknown.values()), "unknown_tools": [n for n, _ in unknown.most_common()],
+        "tool_version": seen["version"],
     }
+
+
+def transcript_warning(data):
+    """One sentence saying why a transcript parsed to nothing usable, else None.
+
+    Everything measured here (tokens, traces, the review gate) is read out of Claude Code's
+    transcript JSONL. When that format moves, the honest failure is a warning, not a row of zeros.
+    """
+    if not data:
+        return None
+    where = f"transcript written by Claude Code {data['tool_version']}" if data["tool_version"] else "transcript"
+    if not data["usage_messages"]:
+        if not data["assistant_messages"]:
+            return f"no assistant messages in this {where}: nothing to measure"
+        return (f"{data['assistant_messages']} assistant messages but no `usage` in this {where}: the format "
+                f"has likely changed, so token counts would all be zero (ctxh {VERSION})")
+    if data["steps"] and not data["known_tool_calls"]:
+        names = ", ".join(data["unknown_tools"][:5])
+        return (f"none of the {data['steps']} tool calls in this {where} carry a name ctxh knows ({names}): "
+                f"traces stay empty and the review gate cannot fire (ctxh {VERSION})")
+    return None
+
+
+def warn_once(kind, message):
+    """Warn on stderr, at most once per state, so an automatic hook doesn't nag every session."""
+    state = TMP / "warnings.json"
+    seen = load_json(state, {}) or {}
+    if seen.get(kind) == message:
+        return False
+    seen[kind] = message
+    write_json(state, seen)
+    print(f"ctx-harness: {message}", file=sys.stderr)
+    return True
 
 
 def record(session, data, label, task):
     data.update(session=session, label=label, task=task, recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     write_json(METRICS / f"{session}.json", {k: data[k] for k in (
         "session", "label", "task", "recorded_at", "tokens_total", "tokens_uncached", "tokens_main",
-        "tokens_sub", "steps", "subagents")})
+        "tokens_sub", "steps", "subagents", "tool_version")})
     if label == "harness":
         write_json(TRACES / f"{session}.json", {k: data[k] for k in (
             "session", "task", "recorded_at", "files_read", "files_edited", "commands",
@@ -1005,6 +1060,11 @@ def cmd_usage(args):
     data = parse_transcript(p)
     if data is None:
         sys.exit(f"no transcript at {p}")
+    warning = transcript_warning(data)
+    if warning and not data["usage_messages"]:
+        sys.exit(f"ctxh usage: {warning}")  # an explicit run fails loudly rather than recording zeros
+    if warning:
+        warn_once("transcript", warning)
     label, task = opt(args, "--label", "baseline"), opt(args, "--task", env("TASK"))
     record(p.stem, data, label, task)
     print(f"{label} {task or ''}: {data['tokens_total']} tokens total "
@@ -1165,12 +1225,12 @@ def unreviewed_edit(path: Path):
             if c.get("type") != "tool_use":
                 continue
             name, inp = c.get("name"), c.get("input") or {}
-            if name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+            if name in TOOLS["edit"]:
                 f = inp.get("file_path") or inp.get("notebook_path") or ""
                 rel = os.path.relpath(f, ROOT) if os.path.isabs(f) else f
                 if f and not rel.startswith((".ctx", "..")) and lang_of(rel):
                     last_edit, reviewed_after = c.get("id"), False
-            elif name in ("Task", "Agent") and str(inp.get("subagent_type", "")).endswith("reviewer"):
+            elif name in TOOLS["subagent"] and str(inp.get("subagent_type", "")).endswith("reviewer"):
                 reviewed_after = True
     return None if reviewed_after else last_edit
 
@@ -1191,7 +1251,11 @@ def cmd_hook_stop(_):
         return
     disabled = env("DISABLED") == "1"
     session = payload.get("session_id") or path.stem
-    record(session, data, "baseline" if disabled else "harness", env("TASK"))
+    warning = transcript_warning(data)
+    if warning:
+        warn_once("transcript", warning)
+    if data["usage_messages"]:  # a transcript the parser can't read is skipped, not stored as zeros
+        record(session, data, "baseline" if disabled else "harness", env("TASK"))
     if disabled or env("REVIEW_GATE", "1") == "0":
         return
     edit = unreviewed_edit(path)

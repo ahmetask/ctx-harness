@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 
 CTXH = Path(__file__).resolve().parents[1] / "plugins" / "ctx-harness" / "bin" / "ctxh"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "transcripts"
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
 
@@ -475,6 +476,81 @@ class ManualCommands(unittest.TestCase):
             self.assertNotEqual(repo.ctxh("add-command", "bogus", "x", check=False).returncode, 0)
         finally:
             repo.cleanup()
+
+
+class TranscriptFixtures(unittest.TestCase):
+    """Checked-in Claude Code transcripts: the format the whole measurement side depends on."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def load(self, name):
+        """Copy a fixture (and its subagents) into the repo, with __ROOT__ pointing at it."""
+        root = str(self.repo.root)
+        dest = self.repo.root / f"{name}.jsonl"
+        dest.write_text((FIXTURES / f"{name}.jsonl").read_text().replace("__ROOT__", root))
+        subs = FIXTURES / name / "subagents"
+        if subs.is_dir():
+            out = self.repo.root / name / "subagents"
+            out.mkdir(parents=True, exist_ok=True)
+            for p in sorted(subs.glob("*.jsonl")):
+                (out / p.name).write_text(p.read_text().replace("__ROOT__", root))
+        return dest
+
+    def metrics(self, session):
+        return json.loads((self.repo.root / ".ctx" / "metrics" / f"{session}.json").read_text())
+
+    def test_session_parses_to_known_tokens_files_and_commands(self):
+        self.repo.ctxh("usage", str(self.load("session-edit")), "--label", "harness", "--task", "t1")
+        m = self.metrics("session-edit")
+        self.assertEqual(m["tokens_total"], 95819)  # main + subagents, deduplicated by message id
+        self.assertEqual(m["tokens_uncached"], 18104)
+        self.assertEqual(m["tokens_main"]["cache_read_input_tokens"], 74655)
+        self.assertEqual(m["tokens_sub"]["cache_creation_input_tokens"], 5000)  # sidechain + subagents/
+        self.assertEqual(m["steps"], 6)
+        self.assertEqual(m["subagents"], {"ctx-harness:scout": 1})
+        self.assertEqual(m["tool_version"], "2.0.14")
+        t = json.loads((self.repo.root / ".ctx" / "traces" / "session-edit.json").read_text())
+        self.assertEqual(t["files_read"], ["app/orders/service.py"])  # the subagent's read is not the session's
+        self.assertEqual(t["files_edited"], ["app/orders/service.py"])
+        self.assertEqual(t["ctx_queries"], ["ctxh q impact app/orders/service.py", "ctxh q find charge_token"])
+        self.assertEqual(t["ctx_misses"], ["ctxh q find charge_token"])
+        self.assertEqual([c["cmd"] for c in t["failed_commands"]], ["python3 -m pytest tests/test_service.py -q"])
+
+    def test_gate_blocks_the_unreviewed_edit_and_passes_the_reviewed_one(self):
+        blocked = self.repo.ctxh("hook-stop", stdin=json.dumps(
+            {"session_id": "s1", "transcript_path": str(self.load("session-edit"))})).stdout
+        self.assertEqual(json.loads(blocked)["decision"], "block")
+        passed = self.repo.ctxh("hook-stop", stdin=json.dumps(
+            {"session_id": "s2", "transcript_path": str(self.load("session-reviewed"))})).stdout
+        self.assertEqual(passed, "")
+        self.assertEqual(self.metrics("s2")["tokens_total"], 27612)
+
+    def test_missing_usage_warns_once_and_records_nothing(self):
+        payload = json.dumps({"session_id": "s3", "transcript_path": str(self.load("drift-no-usage"))})
+        first = self.repo.ctxh("hook-stop", stdin=payload)
+        self.assertIn("no `usage`", first.stderr)
+        self.assertIn("2.0.14", first.stderr)  # the version to report the drift against
+        self.assertFalse((self.repo.root / ".ctx" / "metrics" / "s3.json").exists())  # no row of zeros
+        self.assertEqual(self.repo.ctxh("hook-stop", stdin=payload).stderr, "")  # warns once, not every session
+
+    def test_unknown_tool_names_warn_but_keep_the_token_counts(self):
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps(
+            {"session_id": "s4", "transcript_path": str(self.load("drift-unknown-tools"))}))
+        self.assertIn("str_replace_editor", out.stderr)
+        self.assertEqual(out.stdout, "")  # nothing to gate on: no recognized edit
+        self.assertEqual(self.metrics("s4")["tokens_total"], 21602)
+
+    def test_usage_command_fails_loudly_on_an_unreadable_transcript(self):
+        r = self.repo.ctxh("usage", str(self.load("drift-no-usage")), check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no `usage`", r.stderr)
+        self.assertFalse((self.repo.root / ".ctx" / "metrics").exists())
 
 
 if __name__ == "__main__":
