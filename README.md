@@ -160,7 +160,10 @@ python3 -m unittest discover -s tests      # engine and benchmark tests (benchma
 claude plugin validate .                   # marketplace manifest
 claude plugin validate ./plugins/ctx-harness
 claude --plugin-dir ./plugins/ctx-harness  # try local changes without installing
+python3 bench/sandbox.py                   # demo repo wired to this checkout, plus hook/query smoke checks
 ```
+
+To verify a change on a realistic repo, `bench/sandbox.py` materializes the shopd demo, builds its `.ctx/` with the working-tree `ctxh` and drives the hooks and queries the way Claude Code would. It prints the command for an interactive session in it; `--prompt "<task>"` runs one real `claude -p` session there instead and reports tokens, steps and changed files (`--baseline` for the same session with the harness off).
 
 ## Limits
 

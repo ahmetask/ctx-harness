@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "bench" / "demo"))
 import run as bench  # noqa: E402
 from agents import clean_env  # noqa: E402
 from materialize import HISTORY, TEMPLATE, materialize  # noqa: E402
+import sandbox  # noqa: E402
 
 HAVE_GO = shutil.which("go") is not None
 
@@ -198,6 +199,30 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual({r["mode"] for r in rows}, {"harness", "baseline"})
         self.assertFalse(any(r["passed"] for r in rows))
         self.assertIn("## Failed runs", (run_dir / "report.md").read_text())
+
+
+@unittest.skipUnless(HAVE_GO, "go not installed")
+class Sandbox(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="ctxh-bench-test-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_smoke_passes_and_leaves_no_trace(self):
+        repo = self.tmp / "box"
+        with unittest.mock.patch("sys.stdout"):
+            self.assertEqual(sandbox.main([str(repo)]), 0)
+            self.assertEqual(sandbox.main([str(repo)]), 0)  # reuse re-indexes in place
+        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=repo, text=True,
+                                        capture_output=True).stdout, "")
+        self.assertEqual(list((repo / ".ctx").rglob("sandbox-smoke*")), [])
+
+    def test_refuses_to_delete_a_directory_it_did_not_make(self):
+        (self.tmp / "keep").mkdir()
+        with self.assertRaises(SystemExit):
+            sandbox.main([str(self.tmp / "keep"), "--fresh"])
+        self.assertTrue((self.tmp / "keep").exists())
 
 
 if __name__ == "__main__":
