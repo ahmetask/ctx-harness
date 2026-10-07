@@ -166,6 +166,8 @@ claude --plugin-dir ./plugins/ctx-harness  # try local changes without installin
 python3 bench/sandbox.py                   # demo repo wired to this checkout, plus hook/query smoke checks
 ```
 
+**Which copy of the plugin runs.** This repo's `.claude/settings.json` enables the published plugin (`ctx-harness@ctx-harness`, from GitHub), so a normal session here dogfoods the released version. Claude Code installs it into `~/.claude/plugins/cache/` pinned to the commit it saw at install time, and it does not follow the working tree. To run your local changes, start the session with `--plugin-dir ./plugins/ctx-harness`. A `--plugin-dir` plugin with the same name replaces the installed one for that session, so nothing loads twice. Its hooks, agents, skills and `bin/ctxh` on `PATH` are all the local ones. This was checked on Claude Code 2.1.292 by marking the local copy and counting hook runs in the transcript: one SessionStart, one UserPromptSubmit and one Stop hook, all from the local copy. Without the flag, everything comes from the cached release. To refresh the cached release after a merge, run `claude plugin update ctx-harness@ctx-harness`. `ctxh` itself can always be run from the checkout as `python3 plugins/ctx-harness/bin/ctxh`.
+
 To verify a change on a realistic repo, `bench/sandbox.py` materializes the shopd demo, builds its `.ctx/` with the working-tree `ctxh` and drives the hooks and queries the way Claude Code would. It prints the command for an interactive session in it; `--prompt "<task>"` runs one real `claude -p` session there instead and reports tokens, steps and changed files (`--baseline` for the same session with the harness off).
 
 ## Limits

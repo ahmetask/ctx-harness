@@ -19,7 +19,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T02 | Promote CI `run:` test commands to candidates | dogfooding | P1 | done |
 | T03 | Keep hand-verified commands across re-index | dogfooding | P1 | done |
 | T04 | Module grouping and markdown-only modules | dogfooding | P2 | done |
-| T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | todo |
+| T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | done |
 | T06 | Transcript parser fixtures and version guard | measurement | P1 | done |
 | T07 | Benchmark platform with a demo repo | measurement | P1 | done |
 | T08 | Mid-session context management (compaction) | context | P2 | todo |
@@ -62,9 +62,8 @@ A directory holding a package manifest (including a plugin's `.claude-plugin/plu
 - **Problem:** `list_files` indexes everything git tracks outside `SKIP_DIRS`. Since `bench/demo/template/` landed, the demo's 43 Go files dominate this repo's own index: `ctxh q hot` lists only demo files, `q find IdempotencyKey` answers from the fixture, and the nested `go.mod` adds `cd bench/demo/template && go ...` as this repo's commands. Any repo with fixtures, vendored samples or test data has the same problem.
 - **Done when:** a `.ctxignore` (gitignore-style patterns, read by `list_files` and `detect_commands`) excludes paths from the index and command detection. `testdata/` is skipped by default (Go convention). This repo ignores `bench/demo/` and `bench/tasks/`. `ctxh q hot` here lists engine and bench code, and a test covers it.
 
-### T05 · Document the dogfooding setup
-- **Problem:** `.claude/settings.json` enables the published plugin from GitHub (`main`), but contributors edit the working tree. With `claude --plugin-dir ./plugins/ctx-harness` both copies may load, and it isn't clear which hooks and agents win.
-- **Done when:** the README "Development" section explains how to run this repo against local plugin changes without double hooks (verify actual Claude Code behavior), and the settings are adjusted if a cleaner option exists (for example a local directory marketplace).
+### T05 · Document the dogfooding setup (done)
+Checked on Claude Code 2.1.292: `--plugin-dir ./plugins/ctx-harness` replaces the installed `ctx-harness@ctx-harness` for the session (hooks run once, and the agents and `bin/ctxh` are the local copy), so there are no double hooks and the settings stay as they are. The README "Development" section explains it. See `.ctx/tasks/done/T05-dogfooding-setup.md`.
 
 ## Measurement
 
