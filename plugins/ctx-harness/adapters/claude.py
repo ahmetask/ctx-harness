@@ -21,6 +21,12 @@ TOOLS = {
 }
 KIND_OF = {name: kind for kind, names in TOOLS.items() for name in names}
 
+# How prompts name things (bin/ctxh render_prompt fills {{agent:X}}, {{command:X}} and {{tool:ROLE}}).
+AGENT_REF = "ctx-harness:{}"
+COMMAND_REF = "/ctx-harness:{}"
+PROMPT_TOOLS = {"read": "Read", "search": "Grep", "shell": "Bash", "write": "Write"}
+EXPORT_IN_PLACE = True  # the plugin directory is what Claude Code installs: export writes agents/ and skills/ there
+
 USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 
 
@@ -114,3 +120,24 @@ def read_session(path: Path):
         "usage": [{"side": side, **{k: u.get(k) or 0 for k in USAGE_KEYS}} for (side, _), u in usage.items()],
         "calls": list(calls.values()),
     }
+
+
+AGENT_TOOLS = {"read": "Read", "search": "Grep, Glob", "shell": "Bash", "write": "Write"}
+SKILL_TOOLS = {"ctxh": "Bash(ctxh *)", "read": "Read", "search": "Grep Glob", "shell": "Bash"}
+MODELS = {"fast": "haiku", "inherit": "inherit"}
+
+
+def render_agent(meta, body):
+    """A neutral agent prompt -> {path in the plugin: Claude Code subagent file}."""
+    head = (f"name: {meta['name']}\ndescription: {meta['description']}\n"
+            f"tools: {', '.join(AGENT_TOOLS[t] for t in meta['tools'])}\nmodel: {MODELS[meta.get('model', 'inherit')]}\n")
+    return {f"agents/{meta['name']}.md": f"---\n{head}---\n{body}"}
+
+
+def render_skill(meta, body):
+    """A neutral skill prompt -> {path in the plugin: SKILL.md}; manual skills are slash commands only."""
+    head = f"name: {meta['name']}\ndescription: {meta['description']}\n"
+    if meta["manual"]:
+        head += "disable-model-invocation: true\n"
+    head += f"allowed-tools: {' '.join(SKILL_TOOLS[t] for t in meta['tools'])}\n"
+    return {f"skills/{meta['name']}/SKILL.md": f"---\n{head}---\n{body}"}

@@ -20,6 +20,7 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh review-record [paths]    record that the current content of changed code files was reviewed
   ctxh review-check [--staged | --base REF] [--install-hook]   fail on code changes with no review record
   ctxh version
+  ctxh export --tool NAME [--out DIR] [--check]   write an agent's agent/skill files from prompts/
   ctxh hook-start | hook-prompt | hook-stop [--tool NAME]   agent hook entry points
 
 The engine is tool-neutral. What a coding agent hands its hooks, how a hook answers and what a
@@ -71,9 +72,9 @@ def load_adapter(name):
 
 
 def adapter_name():
-    """The hook commands take `--tool <name>` (agents that sanitize the hook environment); else CTXH_TOOL."""
+    """Hook commands and export take `--tool <name>` (some agents clean the hook environment); else CTXH_TOOL."""
     a = sys.argv
-    if len(a) > 2 and a[1].startswith("hook-") and "--tool" in a[2:-1]:
+    if len(a) > 2 and (a[1].startswith("hook-") or a[1] == "export") and "--tool" in a[2:-1]:
         return a[a.index("--tool", 2) + 1]
     return env("TOOL", "claude")
 
@@ -208,7 +209,7 @@ def need_graph():
     g = load_json(GRAPH)
     if not g:
         if not opted_in():
-            sys.exit("this repo has no .ctx/ yet: run the ctx-harness build skill (/ctx-harness:build)")
+            sys.exit(render_prompt("this repo has no .ctx/ yet: run the ctx-harness build skill ({{command:build}})"))
         cmd_build_index(["--quiet"])  # derived cache: rebuild on demand, it is cheap
         g = load_json(GRAPH)
         if not g:
@@ -707,7 +708,7 @@ def cmd_add_command(args):
     if len(rest) < 2 or rest[0] not in CMD_KINDS:
         sys.exit(f"ctxh add-command {'|'.join(CMD_KINDS)} \"<cmd>\" [--replaces \"<detected cmd>\"] [--no-verify]")
     if not opted_in():
-        sys.exit("this repo has no .ctx/ yet: run the ctx-harness build skill (/ctx-harness:build)")
+        sys.exit(render_prompt("this repo has no .ctx/ yet: run the ctx-harness build skill ({{command:build}})"))
     data = load_json(COMMANDS, {}) or {}
     ci_runs = data.get("ci_runs", [])
     entry = {"cmd": " ".join(rest[1:]), "kind": rest[0], "source": "manual", "verified": None}
@@ -1662,6 +1663,79 @@ def cmd_init(args):
               "and save it as .ctx/map.md (in Claude Code, /ctx-harness:build does all of this)")
 
 
+# ---------------------------------------------------------------- prompts (written once, rendered per agent)
+PROMPTS = PLUGIN_ROOT / "prompts"
+PLACEHOLDER_RX = re.compile(r"\{\{(agent|command|tool):([a-z-]+)\}\}")
+ONLY_RX = re.compile(r"\{\{only:([a-z0-9_]+)\}\}")
+
+
+def render_prompt(text):
+    """Fill a neutral prompt for the active agent: {{agent:X}} and {{command:X}} through the adapter's
+    AGENT_REF / COMMAND_REF formats, {{tool:ROLE}} through its PROMPT_TOOLS, and a line starting with
+    {{only:NAME}} kept only for adapter NAME. Adapters without these get the bare names."""
+    kept = []
+    for line in text.splitlines(keepends=True):
+        m = ONLY_RX.match(line)
+        if m and m.group(1) != ADAPTER.NAME:
+            continue
+        kept.append(line[m.end():] if m else line)
+    refs = {"agent": getattr(ADAPTER, "AGENT_REF", "{}"), "command": getattr(ADAPTER, "COMMAND_REF", "{}")}
+
+    def fill(m):
+        kind, name = m.groups()
+        return getattr(ADAPTER, "PROMPT_TOOLS", {}).get(name, name) if kind == "tool" else refs[kind].format(name)
+
+    return PLACEHOLDER_RX.sub(fill, "".join(kept))
+
+
+def prompt_sources(kind):
+    """[(meta, rendered body)] for prompts/<kind>/*.md. Front matter is `key: value` lines; `tools` is a
+    comma list of roles (read, search, shell, write, ctxh) and `manual: true` keeps a skill user-invoked."""
+    out = []
+    for p in sorted((PROMPTS / kind).glob("*.md")):
+        _, head, body = p.read_text().split("---\n", 2)
+        meta = dict(line.split(": ", 1) for line in head.strip().splitlines())
+        meta["tools"] = [t.strip() for t in meta.get("tools", "").split(",") if t.strip()]
+        meta["manual"] = meta.get("manual") == "true"
+        out.append((meta, render_prompt(body)))
+    return out
+
+
+def cmd_export(args):
+    """Write the active agent's agent and skill files from prompts/, plus anything its adapter packages."""
+    if not hasattr(ADAPTER, "render_agent"):
+        sys.exit(f"ctxh export: adapter '{ADAPTER.NAME}' does not generate prompt files")
+    out = opt(args, "--out") or (str(PLUGIN_ROOT) if getattr(ADAPTER, "EXPORT_IN_PLACE", False) else None)
+    if not out:
+        sys.exit(f"ctxh export --tool {ADAPTER.NAME} --out DIR")
+    out, check = Path(out).resolve(), "--check" in args
+    files = {}
+    for meta, body in prompt_sources("agents"):
+        files.update(ADAPTER.render_agent(meta, body))
+    for meta, body in prompt_sources("skills"):
+        files.update(ADAPTER.render_skill(meta, body))
+    if hasattr(ADAPTER, "package"):
+        files.update(ADAPTER.package(PLUGIN_ROOT))
+    changed = []
+    for rel, content in sorted(files.items()):
+        data = content.read_bytes() if isinstance(content, Path) else content.encode()
+        if isinstance(content, str) and PLACEHOLDER_RX.search(content):
+            sys.exit(f"ctxh export: unfilled placeholder in {rel}")
+        dest = out / rel
+        if dest.is_file() and dest.read_bytes() == data:
+            continue
+        changed.append(rel)
+        if not check:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            if isinstance(content, Path) and os.access(content, os.X_OK):
+                dest.chmod(dest.stat().st_mode | 0o111)
+    if check:
+        print("\n".join(f"differs: {r}" for r in changed) or f"ok: {len(files)} {ADAPTER.LABEL} files match prompts/")
+        sys.exit(1 if changed else 0)
+    print(f"{ADAPTER.LABEL}: wrote {len(changed)} of {len(files)} files to {out}")
+
+
 # ---------------------------------------------------------------- hooks
 def refresh_in_background():
     """Start a detached re-index; the session never waits for it."""
@@ -1701,17 +1775,17 @@ def cmd_hook_start(_):
         return
     if not opted_in():
         if (ROOT / ".git").exists():
-            ADAPTER.emit_context("ctx-harness: this repo has no harness context (.ctx/). "
-                                 "If the user wants it, the build skill (/ctx-harness:build) creates it.")
+            ADAPTER.emit_context(render_prompt("ctx-harness: this repo has no harness context (.ctx/). "
+                                               "If the user wants it, the build skill ({{command:build}}) creates it."))
         return
     out = []
     proto = PROTOCOL_OVERRIDE if PROTOCOL_OVERRIDE.exists() else PROTOCOL_DEFAULT
     if proto.exists():
-        out.append(proto.read_text().strip())
+        out.append(render_prompt(proto.read_text()).strip())
     if MAP.exists():
         out.append(MAP.read_text().strip())
     else:
-        out.append("The repo map is missing: run the build skill (/ctx-harness:build) before non-trivial work.")
+        out.append(render_prompt("The repo map is missing: run the build skill ({{command:build}}) before non-trivial work."))
     g = load_json(GRAPH)
     if g is None or index_lag(g):
         refresh_in_background()  # the index is a derived cache; cards still need the curator
@@ -1733,9 +1807,9 @@ def cmd_hook_prompt(_):
     ADAPTER.read_event(sys.stdin)
     if env("DISABLED") == "1" or not opted_in():
         return
-    lines = ["ctx-harness: if this request means changing 3+ files, call ctx-harness:planner first and wait for "
-             "the user's approval, however detailed the request is. Before finishing any code change, run "
-             "ctx-harness:reviewer, then `ctxh stale`."]
+    lines = [render_prompt("ctx-harness: if this request means changing 3+ files, call {{agent:planner}} first and wait "
+                           "for the user's approval, however detailed the request is. Before finishing any code change, "
+                           "run {{agent:reviewer}}, then `ctxh stale`.")]
     active = CTX / "tasks" / "active.md"
     if active.exists() and active.read_text().strip():
         lines.append("Active plan: .ctx/tasks/active.md")
@@ -1786,8 +1860,9 @@ def plan_gate_reason(info):
     shown = ", ".join(info["files"][:3])
     return (f"ctx-harness plan gate: {len(info['files'])} code files changed in this session ({shown}"
             f"{', ...' if len(info['files']) > 3 else ''}) and there is no plan in .ctx/tasks/active.md. "
-            "Call ctx-harness:planner on what you have done and what is left, show the plan to the user, "
-            "and keep working from it. If the user explicitly said to skip planning, say so and finish.")
+            + render_prompt("Call {{agent:planner}} on what you have done and what is left, show the plan to the "
+                            "user, and keep working from it. If the user explicitly said to skip planning, say so "
+                            "and finish."))
 
 
 def gate_once(session, key, value):
@@ -1830,10 +1905,10 @@ def cmd_hook_stop(_):
         return
     edit = None if info["reviewed_after"] else info["last_edit"]
     if edit and gate_once(session, "blocked_edit", edit):  # block once per edit, never loop
-        ADAPTER.emit_block(
-            "ctx-harness review gate: code changed since the last ctx-harness:reviewer run. Run the reviewer "
+        ADAPTER.emit_block(render_prompt(
+            "ctx-harness review gate: code changed since the last {{agent:reviewer}} run. Run the reviewer "
             "on the diff (at most 2 rounds), record its findings in the plan's progress log, run `ctxh stale`, "
-            "then finish. If the user explicitly said to skip review, say so and finish.")
+            "then finish. If the user explicitly said to skip review, say so and finish."))
 
 
 # ---------------------------------------------------------------- review record (gate outside the agent)
@@ -1924,7 +1999,7 @@ COMMANDS_MAP = {
     "stale": cmd_stale, "check": cmd_check, "signals": cmd_signals, "usage": cmd_usage,
     "stats": cmd_stats, "add-command": cmd_add_command, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop,
     "hook-prompt": cmd_hook_prompt, "version": cmd_version, "init": cmd_init,
-    "review-record": cmd_review_record, "review-check": cmd_review_check,
+    "review-record": cmd_review_record, "review-check": cmd_review_check, "export": cmd_export,
 }
 
 if __name__ == "__main__":

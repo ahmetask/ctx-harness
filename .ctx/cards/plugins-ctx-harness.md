@@ -2,11 +2,11 @@
 module: plugins/ctx-harness
 updated: 2026-10-07
 anchors:
-  plugins/ctx-harness/bin/ctxh: 55e65bd3b797
-  plugins/ctx-harness/protocol.md: 8e2baef17de5
+  plugins/ctx-harness/bin/ctxh: 180131a710a0
+  plugins/ctx-harness/protocol.md: a59478241cb7
   plugins/ctx-harness/hooks/hooks.json: 4291e4081215
-  plugins/ctx-harness/adapters/claude.py: 027255c366c1
-  plugins/ctx-harness/adapters/gemini.py: 661554009720
+  plugins/ctx-harness/adapters/claude.py: ae87042579bc
+  plugins/ctx-harness/adapters/gemini.py: c22a9de8c5ad
 ---
 Owns the plugin: the `ctxh` engine (one tool-neutral stdlib Python file), the agent adapters in `adapters/`, and the prompts that drive agents around it.
 
@@ -28,6 +28,7 @@ Invariants in code:
 - Parsing: `ts_extract` (tree-sitter, when `tree_sitter` + grammar import; `CTXH_PARSER=regex` forces off) returns the same (specs, symbols) shape as the regex path; any failure falls back to regexes. `stack.parsers` in graph.json records which ran per language.
 - Shared traces: `record` -> `sink_push` (CTXH_TRACE_SINK: dir / http(s) POST / redis RPUSH+LTRIM via the stdlib `redis_call`), `shared_trace` drops command output; `cmd_signals` merges `sink_pull()` by session id. Errors only `warn_once`.
 - Metrics carry `tool` (adapter NAME, or `--tool` for `usage --gateway`; old rows default to claude); `stats` groups and pairs by (tool, label/task). `gateway_sessions` maps Anthropic/OpenAI usage names, subtracting OpenAI cached tokens from prompt tokens.
+- Prompts: agents/ and skills/ are generated from `plugins/ctx-harness/prompts/` by `cmd_export` through the adapter's `render_agent`/`render_skill` (edit prompts/, then `ctxh export --tool claude`; tests and CI run `--check`, byte-identical). `render_prompt` fills `{{agent:X}}`/`{{command:X}}`/`{{tool:R}}` and `{{only:NAME}}` lines; protocol.md and hook/gate messages go through it at run time, so never hard-code `ctx-harness:<agent>` in the engine.
 - A repo-level .ctx/protocol.md overrides the plugin `protocol.md` in `cmd_hook_start`.
 - Metrics/traces keep the newest `KEEP_RECORDS` (300) files; traces are written only for `harness` runs.
 - `ctxh check` limits: map 60 lines / 4000 bytes, card body 45 lines, learned 40 lines; flags `IMPERATIVE` phrasing and unfilled LLM placeholders from the skeleton.

@@ -22,6 +22,17 @@ An adapter is a stdlib-only Python module that imports nothing from the engine. 
 | `emit_block(reason)` | How the Stop hook refuses to finish and hands the agent the reason |
 | `read_session(path)` | A session log as the normalized trace below, or `None` if there is no log at `path` |
 
+Optional, for prompts (`ctxh export --tool <name>` and `render_prompt`; without them prompts get bare names and export refuses):
+
+| Name | What it is |
+|---|---|
+| `AGENT_REF`, `COMMAND_REF` | Format strings for `{{agent:X}}` and `{{command:X}}` in prompts and hook messages, e.g. `"ctx-harness:{}"` |
+| `PROMPT_TOOLS` | The tool name a prompt says for `{{tool:read}}`, `search`, `shell`, `write` |
+| `render_agent(meta, body)` | `{path: text}` for one agent from `prompts/agents/` (`meta`: `name`, `description`, `tools` roles, `model` `fast` or `inherit`) |
+| `render_skill(meta, body)` | `{path: text}` for one skill from `prompts/skills/` (`meta` also has `manual`: user-invoked only) |
+| `package(plugin_root)` | Other files the agent installs, as `{path: text or source Path}` (Gemini: manifest, hooks, the engine) |
+| `EXPORT_IN_PLACE` | `True` when export writes into the plugin itself (Claude Code); otherwise `--out` is required |
+
 The normalized trace:
 
 ```python

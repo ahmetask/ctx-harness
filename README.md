@@ -154,7 +154,7 @@ All of this is read out of Claude Code's transcript JSONL, so a format change co
 
 ## Other agents
 
-The index, queries and checks work for any coding agent. Only the hooks (automatic injection, freshness notices, the plan and review gates) and the helper subagents are Claude Code features. To point another agent at the harness, write its instructions file:
+The index, queries and checks work for any coding agent. Only the hooks (automatic injection, freshness notices, the plan and review gates) and the helper subagents need agent support: Claude Code has them through the plugin and Gemini CLI through a generated extension (below). To point any other agent at the harness, write its instructions file:
 
 ```bash
 ctxh init --target agents-md      # AGENTS.md: Codex, GitHub Copilot's coding agent, and other AGENTS.md readers
@@ -166,24 +166,36 @@ ctxh init --target agents-md,gemini   # several at once
 
 Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, plan to `.ctx/tasks/active.md` before touching 3+ files, and run `ctxh stale` at the end. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
 
-### Gemini CLI hooks
+### Gemini CLI extension
 
-Gemini CLI has lifecycle hooks too, so it gets the same automatic injection, metrics and gates through `adapters/gemini.py`: SessionStart runs `hook-start`, BeforeAgent runs `hook-prompt`, and AfterAgent runs `hook-stop`. Add this to `.gemini/settings.json` in the repo (or `~/.gemini/settings.json`), with the path to your checkout:
+Gemini CLI has lifecycle hooks and subagents, so it gets the whole harness: injection, metrics, both gates, the four helper agents and the three skills. Generate an extension from a checkout and link it:
+
+```bash
+python3 plugins/ctx-harness/bin/ctxh export --tool gemini --out ~/ctx-harness-gemini/ctx-harness
+gemini extensions link ~/ctx-harness-gemini/ctx-harness
+```
+
+The extension carries its own copy of `ctxh` and the adapters; re-run the export after pulling. Its hooks run `ctxh hook-start`, `hook-prompt` and `hook-stop` with `--tool gemini` on SessionStart, BeforeAgent and AfterAgent (Gemini cleans the hook environment, so the adapter is named on the command line rather than in `CTXH_TOOL`). The helpers are the subagents `ctx-harness-scout`, `ctx-harness-planner`, `ctx-harness-reviewer` and `ctx-harness-card-writer`; `/ctx-harness:build`, `/ctx-harness:curate` and `/ctx-harness:status` are commands, and `build` is also a skill the model can activate. The agents run on the session's model.
+
+When a gate fires, the AfterAgent hook denies the reply and Gemini retries with the gate's reason as the next prompt, once per edit, as in Claude Code. Gemini has no start event after compression, so the resume note only appears on `/resume`.
+
+Checked against Gemini CLI 0.63.0: `gemini extensions validate` passes, and a session in the demo repo ran the extension's start and prompt hooks with the protocol naming the Gemini agents. That session had no valid API key, so the stop hook and the session-log reader are tested on a log assembled from Gemini's recorder source (`tests/fixtures/gemini/`), not on a live model turn.
+
+To wire the hooks by hand instead, add them to `.gemini/settings.json`:
 
 ```json
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "name": "ctx-harness-start", "timeout": 10000,
-      "command": "python3 /path/to/ctx-harness/plugins/ctx-harness/bin/ctxh hook-start --tool gemini"}]}],
-    "BeforeAgent": [{"hooks": [{"type": "command", "name": "ctx-harness-prompt", "timeout": 10000,
-      "command": "python3 /path/to/ctx-harness/plugins/ctx-harness/bin/ctxh hook-prompt --tool gemini"}]}],
-    "AfterAgent": [{"hooks": [{"type": "command", "name": "ctx-harness-stop", "timeout": 30000,
-      "command": "python3 /path/to/ctx-harness/plugins/ctx-harness/bin/ctxh hook-stop --tool gemini"}]}]
+    "SessionStart": [{"hooks": [{"type": "command", "command": "python3 /path/to/ctxh hook-start --tool gemini"}]}],
+    "BeforeAgent": [{"hooks": [{"type": "command", "command": "python3 /path/to/ctxh hook-prompt --tool gemini"}]}],
+    "AfterAgent": [{"hooks": [{"type": "command", "command": "python3 /path/to/ctxh hook-stop --tool gemini"}]}]
   }
 }
 ```
 
-Gemini runs hooks with a cleaned environment, so the adapter is named with `--tool` rather than `CTXH_TOOL`. When a gate fires, the AfterAgent hook denies the reply and Gemini retries with the gate's reason as the next prompt, once per edit, as in Claude Code. The gates look for subagents whose names end in `planner` and `reviewer` (Gemini's `invoke_agent` calls), so define those in `.gemini/agents/` until the prompts ship for Gemini (T16); without them, the review gate falls back to the record below. Gemini has no start event after compression, so the resume note only appears on `/resume`. The adapter was built from Gemini CLI's hook reference and session-recorder source and is tested on payloads assembled from them, not yet on a live Gemini session.
+### Prompts for each agent
+
+The agent and skill prompts are written once, in `plugins/ctx-harness/prompts/`, with placeholders for what differs between agents: `{{agent:scout}}` (Claude Code: `ctx-harness:scout`, Gemini CLI: `ctx-harness-scout`), `{{command:build}}`, `{{tool:read}}`, and lines starting with `{{only:claude}}` or `{{only:gemini}}`. `protocol.md` uses the same placeholders and is filled at hook time. After editing a prompt, regenerate the Claude Code files with `ctxh export --tool claude`; CI runs `export --tool claude --check`, which fails when `agents/` or `skills/` differ from `prompts/`. Another agent needs an adapter with `render_agent`, `render_skill` and, if it installs a package, `package` (see `plugins/ctx-harness/adapters/README.md`).
 
 ## Review gate outside the agent (opt-in)
 

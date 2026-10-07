@@ -1228,7 +1228,7 @@ class GeminiAdapter(unittest.TestCase):
         start = json.loads(self.hook("hook-start", "session-start.json").stdout)
         self.assertIn("Working protocol", start["hookSpecificOutput"]["additionalContext"])
         prompt = json.loads(self.hook("hook-prompt", "before-agent.json").stdout)
-        self.assertIn("ctx-harness:reviewer", prompt["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("run ctx-harness-reviewer", prompt["hookSpecificOutput"]["additionalContext"])
 
     def test_stop_hook_measures_the_session_and_gates_unreviewed_edits(self):
         stop = self.hook("hook-stop", "after-agent.json")
@@ -1261,6 +1261,79 @@ class GeminiAdapter(unittest.TestCase):
         sid = msgs[0]["sessionId"]
         m = json.loads((self.repo.root / ".ctx" / "metrics" / f"{sid}.json").read_text())
         self.assertEqual(m["steps"], 4)
+
+
+class Prompts(unittest.TestCase):
+    """Agent and skill prompts are written once in prompts/ and generated per agent (`ctxh export`)."""
+
+    def test_claude_files_are_generated_byte_identical(self):
+        r = subprocess.run([sys.executable, str(CTXH), "export", "--tool", "claude", "--check"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_gemini_export_is_a_complete_extension(self):
+        out = Path(tempfile.mkdtemp(prefix="ctxh-gemini-ext-")) / "ctx-harness"
+        repo = Repo()
+        try:
+            subprocess.run([sys.executable, str(CTXH), "export", "--tool", "gemini", "--out", str(out)], check=True,
+                           capture_output=True)
+            manifest = json.loads((out / "gemini-extension.json").read_text())
+            self.assertEqual(manifest["name"], "ctx-harness")
+            hooks = json.loads((out / "hooks" / "hooks.json").read_text())["hooks"]
+            self.assertEqual(sorted(hooks), ["AfterAgent", "BeforeAgent", "SessionStart"])
+            self.assertIn("hook-stop --tool gemini", hooks["AfterAgent"][0]["hooks"][0]["command"])
+            agents = sorted(p.name for p in (out / "agents").iterdir())
+            self.assertEqual(agents, ["ctx-harness-card-writer.md", "ctx-harness-planner.md",
+                                      "ctx-harness-reviewer.md", "ctx-harness-scout.md"])
+            scout = (out / "agents" / "ctx-harness-scout.md").read_text()
+            self.assertIn("  - run_shell_command\n", scout)
+            self.assertIn("Targeted grep_search, then read_file", scout)
+            self.assertNotIn("write_file", scout)
+            # Manual skills become commands only; build is also a model-invocable skill.
+            self.assertEqual(sorted(p.name for p in (out / "skills").iterdir()), ["build"])
+            build = (out / "skills" / "build" / "SKILL.md").read_text()
+            self.assertIn("~/.gemini/policies/", build)
+            self.assertNotIn(".claude/settings.json", build)
+            self.assertIn("`ctx-harness-card-writer`", build)
+            try:
+                import tomllib
+            except ImportError:
+                tomllib = None
+            for name in ("build", "curate", "status"):
+                toml = (out / "commands" / "ctx-harness" / f"{name}.toml").read_text()
+                if tomllib:
+                    self.assertTrue(tomllib.loads(toml)["prompt"].startswith("#"))
+            for p in out.rglob("*"):  # protocol.md stays a source: the engine fills it at hook time
+                if p.is_file() and p.suffix in (".md", ".toml", ".json") and p.name != "protocol.md":
+                    self.assertNotIn("{{", p.read_text(), p)
+            # The extension carries its own engine, which names Gemini's agents at hook time.
+            self.assertTrue(os.access(out / "bin" / "ctxh", os.X_OK))
+            (repo.root / ".ctx").mkdir()
+            r = subprocess.run([sys.executable, str(out / "bin" / "ctxh"), "hook-prompt", "--tool", "gemini"],
+                               cwd=repo.root, input="{}", capture_output=True, text=True,
+                               env=repo.env({"GEMINI_PROJECT_DIR": str(repo.root)}))
+            ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("call ctx-harness-planner first", ctx)
+            r = subprocess.run([sys.executable, str(out / "bin" / "ctxh"), "hook-start", "--tool", "gemini"],
+                               cwd=repo.root, input="{}", capture_output=True, text=True,
+                               env=repo.env({"GEMINI_PROJECT_DIR": str(repo.root)}))
+            ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("`ctx-harness-reviewer`", ctx)
+            self.assertNotIn("{{", ctx)
+        finally:
+            repo.cleanup()
+            shutil.rmtree(out.parent, ignore_errors=True)
+
+    def test_claude_hooks_still_name_claude_agents(self):
+        repo = Repo()
+        try:
+            (repo.root / ".ctx").mkdir()
+            self.assertIn("call ctx-harness:planner first", repo.ctxh("hook-prompt", stdin="{}").stdout)
+            start = repo.ctxh("hook-start", stdin="{}").stdout
+            self.assertIn("`ctx-harness:scout`", start)
+            self.assertIn("`/ctx-harness:curate`", start)
+        finally:
+            repo.cleanup()
 
 
 if __name__ == "__main__":

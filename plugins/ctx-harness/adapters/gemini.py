@@ -20,6 +20,12 @@ TOOLS = {
 }
 KIND_OF = {name: kind for kind, names in TOOLS.items() for name in names}
 
+# How prompts name things. Subagent names may hold only lowercase letters, digits, - and _; extension
+# commands in commands/ctx-harness/ are namespaced like Claude Code's.
+AGENT_REF = "ctx-harness-{}"
+COMMAND_REF = "/ctx-harness:{}"
+PROMPT_TOOLS = {"read": "read_file", "search": "grep_search", "shell": "run_shell_command", "write": "write_file"}
+
 
 def project_dir():
     """Gemini CLI sets GEMINI_PROJECT_DIR (and CLAUDE_PROJECT_DIR as an alias) for hooks."""
@@ -185,3 +191,50 @@ def read_session(path: Path):
         for p in sorted(subdir.glob("*.jsonl")):
             ingest(p, "sub")
     return {"tool_version": "", "assistant_messages": seen["assistant"], "usage": usage, "calls": calls}
+
+
+# ---------------------------------------------------------------- export: a Gemini CLI extension
+AGENT_TOOLS = {"read": ["read_file", "read_many_files"], "search": ["grep_search", "glob", "list_directory"],
+               "shell": ["run_shell_command"], "write": ["write_file"]}
+HOOKS = {"SessionStart": ("hook-start", 20000), "BeforeAgent": ("hook-prompt", 10000), "AfterAgent": ("hook-stop", 30000)}
+TOML_FENCE = "'" * 3  # a TOML multi-line literal string: no escapes, so the prompt goes in verbatim
+
+
+def render_agent(meta, body):
+    """A neutral agent prompt -> {path: subagent file}. Gemini front matter is YAML, so strings are quoted.
+    `model: fast` is left to the session model: Gemini model ids change too often to pin one here."""
+    tools = [t for role in meta["tools"] for t in AGENT_TOOLS[role]]
+    name = AGENT_REF.format(meta["name"])
+    head = (f"name: {name}\ndescription: {json.dumps(meta['description'])}\nkind: local\ntools:\n"
+            + "".join(f"  - {t}\n" for t in tools))
+    return {f"agents/{name}.md": f"---\n{head}---\n{body}"}
+
+
+def render_skill(meta, body):
+    """A neutral skill -> a /ctx-harness:<name> command, plus an agent skill when the model may invoke it."""
+    if TOML_FENCE in body:
+        raise ValueError(f"skill {meta['name']}: a prompt cannot contain {TOML_FENCE}")
+    files = {f"commands/ctx-harness/{meta['name']}.toml":
+             f"description = {json.dumps(meta['description'])}\nprompt = {TOML_FENCE}\n{body}{TOML_FENCE}\n"}
+    if not meta["manual"]:
+        files[f"skills/{meta['name']}/SKILL.md"] = (
+            f"---\nname: {meta['name']}\ndescription: {json.dumps(meta['description'])}\n---\n{body}")
+    return files
+
+
+def package(plugin_root: Path):
+    """Everything else a self-contained extension needs: manifest, hooks, and the engine itself."""
+    manifest = json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text())  # the version source
+    hooks = {event: [{"hooks": [{"type": "command", "name": f"ctx-harness-{cmd}", "timeout": timeout,
+                                 "command": f'python3 "${{extensionPath}}/bin/ctxh" {cmd} --tool {NAME}'}]}]
+             for event, (cmd, timeout) in HOOKS.items()}
+    files = {
+        "gemini-extension.json": json.dumps({"name": manifest["name"], "version": manifest["version"],
+                                             "description": manifest["description"]}, indent=2) + "\n",
+        "hooks/hooks.json": json.dumps({"hooks": hooks}, indent=2) + "\n",
+        "bin/ctxh": plugin_root / "bin" / "ctxh",
+        "protocol.md": plugin_root / "protocol.md",
+    }
+    for p in sorted((plugin_root / "adapters").glob("*.py")):
+        files[f"adapters/{p.name}"] = p
+    return files

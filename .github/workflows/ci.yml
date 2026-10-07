@@ -45,3 +45,9 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code
       - run: claude plugin validate .
       - run: claude plugin validate ./plugins/ctx-harness
+      - name: Agent and skill files match prompts/
+        run: python3 plugins/ctx-harness/bin/ctxh export --tool claude --check
+      - name: Gemini CLI extension validates
+        run: |
+          python3 plugins/ctx-harness/bin/ctxh export --tool gemini --out "$RUNNER_TEMP/gemini/ctx-harness"
+          npx -y @google/gemini-cli extensions validate "$RUNNER_TEMP/gemini/ctx-harness"

@@ -30,7 +30,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T13 | Split `ctxh` into tool-neutral core + Claude adapter | portability | P2 | done |
 | T14 | `ctxh init --target` instruction files for other agents | portability | P2 | done |
 | T15 | Configurable tool names for traces and the review gate | portability | P2 | done |
-| T16 | Tool-neutral agent/skill prompts with per-tool generators | portability | P3 | todo |
+| T16 | Tool-neutral agent/skill prompts with per-tool generators | portability | P3 | done |
 | T17 | Hook adapters for other agents | portability | P3 | done |
 | T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | done |
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
@@ -121,12 +121,11 @@ When `tree_sitter` and a grammar are importable, Python, Go, JS/TS, Java, Rust a
 ### T15 · Configurable tool names (done)
 The read / edit / shell / subagent mapping is the adapter's `TOOLS`; the engine only sees each call's role. Done with T13.
 
-### T16 · Tool-neutral agent and skill prompts
-- **Problem:** the scout, planner, reviewer, card-writer and skill prompts are written in Claude's frontmatter format.
-- **Done when:** prompt bodies live in one neutral place, and per-tool frontmatter or wrappers are generated (Claude first, then at least one other). Claude output is byte-identical or reviewed.
+### T16 · Tool-neutral agent and skill prompts (done)
+Prompts live once in `plugins/ctx-harness/prompts/` with placeholders for agent names, commands and tool names. `ctxh export --tool claude` regenerates `agents/` and `skills/` byte-identically (CI checks it); `ctxh export --tool gemini --out DIR` writes a complete Gemini CLI extension (subagents, commands, the build skill, hooks, the engine), which `gemini extensions validate` accepts. See `.ctx/tasks/done/T16-neutral-prompts.md`.
 
 ### T17 · Hook adapters for other agents (done)
-Gemini CLI gets `adapters/gemini.py`: SessionStart, BeforeAgent and AfterAgent run `ctxh hook-start|hook-prompt|hook-stop --tool gemini`, with JSON replies and a session-log reader that replays patches and rewinds. Tested on payloads assembled from Gemini's hook reference and recorder source; not yet run against a live Gemini session. Tools without a stop hook use the T19 review record. See `.ctx/tasks/done/T17-gemini-hooks.md`.
+Gemini CLI gets `adapters/gemini.py`: SessionStart, BeforeAgent and AfterAgent run `ctxh hook-start|hook-prompt|hook-stop --tool gemini`, with JSON replies and a session-log reader that replays patches and rewinds. Tested on payloads assembled from Gemini's hook reference and recorder source. Gemini CLI 0.63.0 ran the start and prompt hooks live (no API key, so no model turn reached the stop hook). Tools without a stop hook use the T19 review record. See `.ctx/tasks/done/T17-gemini-hooks.md`.
 
 ### T18 · Tool label and vendor-neutral token counting (done)
 Metric records carry `tool`. `ctxh stats` groups by tool and label, and pairs harness and baseline runs only within a tool. `ctxh usage --gateway <requests.jsonl> --tool <agent>` imports per-session usage from an LLM gateway log, with either Anthropic or OpenAI field names. See `.ctx/tasks/done/T18-tool-label.md`.
