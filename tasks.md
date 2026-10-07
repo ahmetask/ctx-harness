@@ -26,7 +26,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | done |
 | T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | done |
 | T11 | Optional tree-sitter parsing | retrieval | P3 | done |
-| T12 | Shared trace store for team-wide curation | learning | P3 | todo |
+| T12 | Shared trace store for team-wide curation | learning | P3 | done |
 | T13 | Split `ctxh` into tool-neutral core + Claude adapter | portability | P2 | done |
 | T14 | `ctxh init --target` instruction files for other agents | portability | P2 | done |
 | T15 | Configurable tool names for traces and the review gate | portability | P2 | done |
@@ -105,7 +105,8 @@ When `tree_sitter` and a grammar are importable, Python, Go, JS/TS, Java, Rust a
 
 ## Learning
 
-### T12 · Shared trace store
+### T12 · Shared trace store (done)
+`CTXH_TRACE_SINK` (a directory, an http(s) URL or `redis://`) receives each harness trace, minus command output. `ctxh signals` merges it with local traces. Unset means unchanged behavior, and privacy is documented in the README. See `.ctx/tasks/done/T12-shared-traces.md`.
 - **Problem:** traces live in each machine's `.ctx/traces/`, so the curator only learns from one developer's sessions.
 - **Done when:** an optional sink (env-configured: a directory, an HTTP endpoint or Redis) receives traces, and `ctxh signals` can read from it. Local behavior is unchanged when it isn't configured. Privacy is documented: traces hold commands and paths, not code.
 

@@ -32,6 +32,8 @@ Environment:
   CTXH_PLAN_GATE=0    skip the Stop-hook check that a 3+ file change was planned first
   CTXH_TOOL=<name>    agent adapter to use (default: claude)
   CTXH_PARSER=regex   ignore tree-sitter even when it is installed
+  CTXH_TRACE_SINK=<dir | http(s)://url | redis://host[:port][/db]>   also send traces there; signals reads it
+  CTXH_TRACE_REPO=<name>   repo key in the shared sink (default: origin URL)
 """
 import hashlib
 import math
@@ -1297,15 +1299,120 @@ def warn_once(kind, message):
     return True
 
 
+# ---------------------------------------------------------------- shared trace sink (opt-in, for team-wide curation)
+SINK_TIMEOUT = 3  # seconds; the Stop hook never waits longer than this on the network
+SINK_KEEP = 2000  # traces kept per repo in a Redis sink
+
+
+def repo_id():
+    """Stable name for this repo across machines: CTXH_TRACE_REPO, else the origin URL, else the folder name."""
+    rid = env("TRACE_REPO")
+    if not rid:
+        code, url, _ = sh(["git", "remote", "get-url", "origin"])
+        url = url.strip() if code == 0 else ""
+        url = re.sub(r"^[a-z+]+://([^@/]*@)?", "", url)  # scheme and any credentials
+        url = re.sub(r"^[^@/]*@", "", url).replace(":", "/")  # git@host:owner/repo
+        rid = re.sub(r"\.git$", "", url) or ROOT.name
+    return re.sub(r"[^\w.\-]+", "_", rid).strip("_")
+
+
+def shared_trace(trace):
+    """What leaves the machine: paths, commands and query strings, never command output (it can hold code)."""
+    out = {k: v for k, v in trace.items() if k != "failed_commands"}
+    out["failed_commands"] = [{"cmd": c["cmd"]} for c in trace.get("failed_commands", [])]
+    out["repo"] = repo_id()
+    return out
+
+
+def redis_call(url, *cmd):
+    """One command to a Redis server (redis://[:password@]host[:port][/db]) over a raw socket, RESP2."""
+    import socket
+    from urllib.parse import urlparse
+    u = urlparse(url)
+    with socket.create_connection((u.hostname or "localhost", u.port or 6379), timeout=SINK_TIMEOUT) as sock:
+        f = sock.makefile("rb")
+
+        def send(*words):
+            parts = [str(w).encode() for w in words]
+            sock.sendall(b"*%d\r\n" % len(parts) + b"".join(b"$%d\r\n%s\r\n" % (len(x), x) for x in parts))
+            return read()
+
+        def read():
+            line = f.readline().rstrip(b"\r\n")
+            kind, rest = line[:1], line[1:]
+            if kind == b"-":
+                raise OSError(rest.decode())
+            if kind in (b"+", b":"):
+                return rest.decode()
+            if kind == b"$":
+                n = int(rest)
+                return None if n < 0 else f.read(n + 2)[:-2].decode()
+            if kind == b"*":
+                return [read() for _ in range(int(rest))] if int(rest) >= 0 else None
+            raise OSError(f"unexpected reply from redis: {line[:40]!r}")
+
+        if u.password:
+            send(*(["AUTH", u.username, u.password] if u.username else ["AUTH", u.password]))
+        if u.path.strip("/"):
+            send("SELECT", u.path.strip("/"))
+        return send(*cmd)
+
+
+def sink_push(trace):
+    """Copy one trace to CTXH_TRACE_SINK (a directory, an http(s) URL or a redis:// URL); failures only warn."""
+    sink = env("TRACE_SINK")
+    if not sink:
+        return
+    item = shared_trace(trace)
+    try:
+        if sink.startswith(("http://", "https://")):
+            from urllib.request import Request, urlopen
+            req = Request(sink, data=json.dumps(item).encode(), method="POST",
+                          headers={"Content-Type": "application/json"})
+            urlopen(req, timeout=SINK_TIMEOUT).close()
+        elif sink.startswith("redis://"):
+            key = f"ctxh:traces:{item['repo']}"
+            redis_call(sink, "RPUSH", key, json.dumps(item))
+            redis_call(sink, "LTRIM", key, -SINK_KEEP, -1)
+        else:
+            write_json(Path(sink).expanduser() / item["repo"] / f"{item['session']}.json", item)
+    except Exception as e:  # never fail a session over the shared store
+        warn_once("sink", f"could not send the trace to CTXH_TRACE_SINK ({type(e).__name__}: {e})")
+
+
+def sink_pull():
+    """This repo's traces from CTXH_TRACE_SINK, or [] when none is configured or it can't be read."""
+    sink = env("TRACE_SINK")
+    if not sink:
+        return []
+    rid = repo_id()
+    try:
+        if sink.startswith(("http://", "https://")):
+            from urllib.parse import urlencode
+            from urllib.request import urlopen
+            with urlopen(f"{sink}{'&' if '?' in sink else '?'}{urlencode({'repo': rid})}", timeout=SINK_TIMEOUT) as r:
+                items = json.loads(r.read().decode())
+        elif sink.startswith("redis://"):
+            items = [json.loads(x) for x in redis_call(sink, "LRANGE", f"ctxh:traces:{rid}", 0, -1) or []]
+        else:
+            items = [load_json(p) for p in sorted((Path(sink).expanduser() / rid).glob("*.json"))]
+    except Exception as e:
+        print(f"ctxh: could not read CTXH_TRACE_SINK ({type(e).__name__}: {e}); using local traces only",
+              file=sys.stderr)
+        return []
+    return [t for t in items if isinstance(t, dict) and t.get("repo", rid) == rid]
+
+
 def record(session, data, label, task):
     data.update(session=session, label=label, task=task, recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     write_json(METRICS / f"{session}.json", {k: data[k] for k in (
         "session", "label", "task", "recorded_at", "tokens_total", "tokens_uncached", "tokens_main",
         "tokens_sub", "steps", "subagents", "tool_version")})
     if label == "harness":
-        write_json(TRACES / f"{session}.json", {k: data[k] for k in (
-            "session", "task", "recorded_at", "files_read", "files_edited", "commands",
-            "failed_commands", "ctx_queries", "ctx_misses", "subagents")})
+        trace = {k: data[k] for k in ("session", "task", "recorded_at", "files_read", "files_edited", "commands",
+                                      "failed_commands", "ctx_queries", "ctx_misses", "subagents")}
+        write_json(TRACES / f"{session}.json", trace)
+        sink_push(trace)
     for d in (METRICS, TRACES):  # bounded history: keep the newest records only
         if d.exists():
             for old in sorted(d.glob("*.json"), key=lambda f: f.stat().st_mtime)[:-KEEP_RECORDS]:
@@ -1378,7 +1485,12 @@ def cmd_stats(_):
 
 def cmd_signals(_):
     traces = [load_json(p) for p in sorted(TRACES.glob("*.json"))] if TRACES.exists() else []
-    traces = [t for t in traces if t and t.get("task") not in OVERHEAD_TASKS]
+    local = {t.get("session") for t in traces if t}
+    shared = [t for t in sink_pull() if t.get("session") not in local]  # a session counts once
+    traces = [t for t in traces + shared if t and t.get("task") not in OVERHEAD_TASKS]
+    for t in traces:
+        for k in ("files_read", "failed_commands", "ctx_queries", "ctx_misses"):
+            t.setdefault(k, [])
     if not traces:
         print("no traces yet")
         return
@@ -1387,7 +1499,8 @@ def cmd_signals(_):
         if p.exists():
             known += p.read_text()
     reads = Counter(f for t in traces for f in set(t["files_read"]))
-    print(f"{len(traces)} traces")
+    n_shared = sum(1 for t in traces if t.get("session") not in local)
+    print(f"{len(traces)} traces" + (f" ({n_shared} from the shared sink)" if n_shared else ""))
     print("\nfiles needed in >=3 tasks but not mentioned in map/cards/learned:")
     hits = [(n, f) for f, n in reads.items() if n >= 3 and f.rsplit("/", 1)[-1] not in known]
     print("\n".join(f"  {n}x {f}" for n, f in sorted(hits, reverse=True)[:10]) or "  none")

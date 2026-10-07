@@ -843,6 +843,154 @@ class KeywordSearch(unittest.TestCase):
         self.assertIn("no symbol matching 'zebra'", self.q("find", "zebra"))
 
 
+class FakeRedis:
+    """Just enough of a Redis server (RPUSH, LTRIM, LRANGE over RESP) to test the sink without one."""
+
+    def __init__(self):
+        import socketserver
+        import threading
+        lists = self.lists = {}
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                while True:
+                    head = self.rfile.readline()
+                    if not head:
+                        return
+                    words = []
+                    for _ in range(int(head[1:])):
+                        n = int(self.rfile.readline()[1:])
+                        words.append(self.rfile.read(n + 2)[:-2].decode())
+                    cmd, key, rest = words[0].upper(), words[1], words[2:]
+                    if cmd in ("SELECT", "AUTH"):
+                        self.wfile.write(b"+OK\r\n")
+                        continue
+                    items = lists.setdefault(key, [])
+                    if cmd == "RPUSH":
+                        items.extend(rest)
+                        self.wfile.write(b":%d\r\n" % len(items))
+                    elif cmd == "LTRIM":
+                        lists[key] = items[int(rest[0]):][:None if int(rest[1]) == -1 else int(rest[1]) + 1]
+                        self.wfile.write(b"+OK\r\n")
+                    elif cmd == "LRANGE":
+                        self.wfile.write(b"*%d\r\n" % len(items) + b"".join(
+                            b"$%d\r\n%s\r\n" % (len(x.encode()), x.encode()) for x in items))
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f"redis://127.0.0.1:{self.server.server_address[1]}/0"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class FakeHTTPSink:
+    """POST stores a trace, GET ?repo= lists them: the HTTP sink contract from the README."""
+
+    def __init__(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib.parse import parse_qs, urlparse
+        store = self.store = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                store.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(204)
+                self.end_headers()
+
+            def do_GET(self):
+                repo = parse_qs(urlparse(self.path).query).get("repo", [""])[0]
+                body = json.dumps([t for t in store if t["repo"] == repo]).encode()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/traces"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class SharedTraces(unittest.TestCase):
+    """CTXH_TRACE_SINK: traces go to a shared store as well, and `ctxh signals` reads it back."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.git("remote", "add", "origin", "https://user:tok@github.com/acme/shop.git")
+        self.repo.ctxh("build-index")
+        self.tp = self.repo.root / "t.jsonl"
+        transcript(self.tp, [("Read", {"file_path": str(self.repo.root / "app/common/retry.py")}),
+                             ("Bash", {"command": "make tset"})])
+        lines = self.tp.read_text().splitlines()
+        result = json.loads(lines[3])
+        result["message"]["content"][0].update(is_error=True, content="SECRET_TOKEN=abc in output")
+        lines[3] = json.dumps(result)
+        self.tp.write_text("\n".join(lines))
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def stop(self, session, sink):
+        self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": session, "transcript_path": str(self.tp)}),
+                       env={"CTXH_TRACE_SINK": sink, "CTXH_REVIEW_GATE": "0"})
+
+    def check_sink(self, sink, stored):
+        for s in ("s1", "s2", "s3"):
+            self.stop(s, sink)
+        items = stored()
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[0]["repo"], "github.com_acme_shop")  # credentials stripped from the key
+        self.assertEqual(items[0]["failed_commands"], [{"cmd": "make tset"}])  # command output never leaves
+        self.assertNotIn("SECRET_TOKEN", json.dumps(items))
+        local = json.loads((self.repo.root / ".ctx/traces/s1.json").read_text())
+        self.assertIn("SECRET_TOKEN", json.dumps(local))  # local traces are unchanged
+        for f in (self.repo.root / ".ctx/traces").glob("*.json"):
+            f.unlink()  # as if these sessions ran on teammates' machines
+        out = self.repo.ctxh("signals", env={"CTXH_TRACE_SINK": sink}).stdout
+        self.assertIn("3 traces (3 from the shared sink)", out)
+        self.assertIn("3x app/common/retry.py", out)
+        self.assertIn("3x make tset", out)
+        self.assertIn("no traces yet", self.repo.ctxh("signals").stdout)  # unset: local only, as before
+
+    def test_directory_sink(self):
+        d = Path(tempfile.mkdtemp(prefix="ctxh-sink-"))
+        try:
+            self.check_sink(str(d), lambda: [json.loads(p.read_text())
+                                             for p in sorted((d / "github.com_acme_shop").glob("*.json"))])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_http_sink(self):
+        srv = FakeHTTPSink()
+        try:
+            self.check_sink(srv.url, lambda: srv.store)
+        finally:
+            srv.close()
+
+    def test_redis_sink(self):
+        srv = FakeRedis()
+        try:
+            self.check_sink(srv.url, lambda: [json.loads(x) for x in srv.lists["ctxh:traces:github.com_acme_shop"]])
+        finally:
+            srv.close()
+
+    def test_unreachable_sink_warns_and_keeps_local(self):
+        r = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "x", "transcript_path": str(self.tp)}),
+                           env={"CTXH_TRACE_SINK": "redis://127.0.0.1:1/0", "CTXH_REVIEW_GATE": "0"})
+        self.assertIn("could not send the trace to CTXH_TRACE_SINK", r.stderr)
+        self.assertTrue((self.repo.root / ".ctx/traces/x.json").exists())
+
+
 class ReviewRecord(unittest.TestCase):
     """The opt-in review gate outside the agent: .ctx/reviews.json, review-check, the pre-commit hook."""
 

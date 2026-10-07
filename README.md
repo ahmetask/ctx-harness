@@ -177,6 +177,20 @@ In CI, check a pull request against its base. This needs the history: `fetch-dep
 
 A record shows that someone ran `review-record` on that exact content. It doesn't show that the review was any good. `CTXH_REVIEW_GATE=0` skips the check. After updating the plugin, re-run `--install-hook`, because the hook points at the `ctxh` path it was installed from.
 
+## Sharing traces across a team (opt-in)
+
+By default traces stay in each machine's `.ctx/traces/`, so the curator learns from one developer's sessions. Set `CTXH_TRACE_SINK` and every harness session also sends its trace to a shared store, and `ctxh signals` (which the curate skill reads) merges the shared traces with the local ones, counting each session once:
+
+| `CTXH_TRACE_SINK` | Store |
+|---|---|
+| a directory path (for example on a shared drive) | `<dir>/<repo>/<session>.json` |
+| `https://…` | `POST` one JSON trace per session; `GET <url>?repo=<repo>` must return a JSON list of them |
+| `redis://[:password@]host[:port][/db]` | a list `ctxh:traces:<repo>`, trimmed to the newest 2000 (stdlib client, no package needed) |
+
+`<repo>` is `CTXH_TRACE_REPO`, or the `origin` URL with any credentials removed (`github.com_acme_shop`). Sending waits at most 3 seconds and never fails a session. An unreachable store prints one warning and the local trace is still written. With the variable unset, nothing changes.
+
+**Privacy.** A shared trace holds repo-relative paths of files read and edited, the shell commands the agent ran (first 200 characters each), the `ctxh q` queries, subagent names, the task label and timestamps. It never holds file contents or command output: the failure output kept in local traces is dropped before sending. Commands can still contain anything typed on a command line, such as a token passed as an argument, so point the sink only at a store your team already trusts with that.
+
 ## Automating curation
 
 Curation should follow merges, not run during a task. Options:
@@ -193,6 +207,8 @@ Curation should follow merges, not run during a task. Options:
 | `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check and `ctxh review-check` |
 | `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
 | `CTXH_PARSER=regex` | Use the regex parser even when tree-sitter is installed |
+| `CTXH_TRACE_SINK=<dir or URL>` | Also send each trace to a shared directory, HTTP endpoint or Redis; `ctxh signals` reads it back |
+| `CTXH_TRACE_REPO=<name>` | The repo's key in the shared store (default: the `origin` URL) |
 | `CTXH_TOOL=<name>` | Agent adapter to load from `plugins/ctx-harness/adapters/` (default `claude`) |
 
 ## Development
@@ -213,5 +229,5 @@ To verify a change on a realistic repo, `bench/sandbox.py` materializes the shop
 
 - **Parsing:** import and symbol parsing is regex-based unless tree-sitter is installed (optional). There is no call graph either way.
 - **Token accounting:** reads Claude Code's transcript format (in its adapter), which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
-- **Local traces:** traces stay on each machine. For team-wide curation, ship them to a shared store, such as Redis, and point the curator there.
+- **Shared traces are opt-in:** without `CTXH_TRACE_SINK`, the curator learns only from the machine it runs on.
 - **Gates fire at the end:** both the plan and review checks run in the Stop hook, so they catch an unplanned or unreviewed change when the session tries to finish rather than when it starts. A PreToolUse gate would interrupt mid-change; this costs a turn instead.

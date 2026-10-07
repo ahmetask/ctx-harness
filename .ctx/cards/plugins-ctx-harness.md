@@ -2,7 +2,7 @@
 module: plugins/ctx-harness
 updated: 2026-10-07
 anchors:
-  plugins/ctx-harness/bin/ctxh: 9938efc3b30a
+  plugins/ctx-harness/bin/ctxh: 30c408ebf167
   plugins/ctx-harness/protocol.md: 8e2baef17de5
   plugins/ctx-harness/hooks/hooks.json: 4291e4081215
   plugins/ctx-harness/adapters/claude.py: 027255c366c1
@@ -25,6 +25,7 @@ Invariants in code:
 - Opt-in review record: .ctx/reviews.json (`REVIEWS`, committed; path -> git blob id). `review-check` compares changed code files (`--staged`: index blobs, `--base`: HEAD blobs, default: `git hash-object`), and the Stop hook calls `record_reviews` only when that file exists and a reviewer ran after the last edit.
 - `q search` / `q find` fallback: `keyword_search` builds units at query time (no index change): symbol name x3 + comment block above + comments/docstring in the next 8 lines, loose 3+ line comment blocks, markdown sections; BM25 times query-term coverage. Trace misses also match `no keyword`.
 - Parsing: `ts_extract` (tree-sitter, when `tree_sitter` + grammar import; `CTXH_PARSER=regex` forces off) returns the same (specs, symbols) shape as the regex path; any failure falls back to regexes. `stack.parsers` in graph.json records which ran per language.
+- Shared traces: `record` -> `sink_push` (CTXH_TRACE_SINK: dir / http(s) POST / redis RPUSH+LTRIM via the stdlib `redis_call`), `shared_trace` drops command output; `cmd_signals` merges `sink_pull()` by session id. Errors only `warn_once`.
 - A repo-level .ctx/protocol.md overrides the plugin `protocol.md` in `cmd_hook_start`.
 - Metrics/traces keep the newest `KEEP_RECORDS` (300) files; traces are written only for `harness` runs.
 - `ctxh check` limits: map 60 lines / 4000 bytes, card body 45 lines, learned 40 lines; flags `IMPERATIVE` phrasing and unfilled LLM placeholders from the skeleton.
