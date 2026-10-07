@@ -15,9 +15,9 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 
 | ID | Task | Area | Priority | Status |
 |---|---|---|---|---|
-| T01 | Index extensionless scripts by shebang | dogfooding | P1 | todo |
-| T02 | Promote CI `run:` test commands to candidates | dogfooding | P1 | todo |
-| T03 | Keep hand-verified commands across re-index | dogfooding | P1 | todo |
+| T01 | Index extensionless scripts by shebang | dogfooding | P1 | done |
+| T02 | Promote CI `run:` test commands to candidates | dogfooding | P1 | done |
+| T03 | Keep hand-verified commands across re-index | dogfooding | P1 | done |
 | T04 | Module grouping and markdown-only modules | dogfooding | P2 | todo |
 | T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | todo |
 | T06 | Transcript parser fixtures and version guard | measurement | P1 | todo |
@@ -35,7 +35,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | todo |
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | todo |
 | T20 | Run the real benchmark and publish results | measurement | P1 | todo |
-| T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | todo |
+| T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
 
 Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest.
 

@@ -6,6 +6,7 @@ so only the *answer* enters their context. Repo data lives in <repo>/.ctx/;
 a repo opts in by having that directory (the build skill creates it).
 
   ctxh build-index [--verify] [--quiet]  scan code, mine git, detect commands -> graph.json, commands.json
+  ctxh add-command <kind> <cmd> [--replaces <cmd>]   keep a fixed/added command across re-index
   ctxh skeleton                 draft map from the index                -> map.draft.md
   ctxh q <query> [arg]          answer from the index: find, deps, rdeps, impact, cochange,
                                 tests, owner, risk, module, hot
@@ -79,10 +80,13 @@ LANGS = {
     ".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
     ".cjs": "javascript", ".ts": "typescript", ".tsx": "typescript", ".go": "go",
     ".java": "java", ".kt": "kotlin", ".rb": "ruby", ".rs": "rust", ".cs": "csharp",
-    ".php": "php", ".scala": "scala", ".swift": "swift",
+    ".php": "php", ".scala": "scala", ".swift": "swift", ".sh": "shell", ".bash": "shell",
 }
+SHEBANG_LANGS = {"python": "python", "node": "javascript", "ruby": "ruby",  # extensionless scripts
+                 "bash": "shell", "sh": "shell", "zsh": "shell"}
 SKIP_DIRS = {".git", ".ctx", ".claude", "node_modules", "vendor", "dist", "build", "target",
-             ".venv", "venv", "__pycache__", ".idea", ".vscode", ".next", "coverage", ".gradle"}
+             ".venv", "venv", "__pycache__", ".idea", ".vscode", ".next", "coverage", ".gradle", "testdata"}
+IGNORE_FILE = ".ctxignore"
 CONTAINERS = {"src", "app", "lib", "pkg", "internal", "cmd", "packages", "services", "apps", "modules"}
 MANIFESTS = {"package.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "go.mod",
              "pom.xml", "build.gradle", "build.gradle.kts", "Cargo.toml", "Gemfile", "composer.json",
@@ -107,15 +111,16 @@ IMPORT_RX["kotlin"] = IMPORT_RX["java"]
 IMPORT_RX["scala"] = IMPORT_RX["java"]
 
 SYMBOL_RX = {
-    "python": re.compile(r"^(?:\s{0,8})(?:async\s+)?(?:def|class)\s+(\w+)", re.M),
+    "python": re.compile(r"^[ \t]{0,8}(?:async\s+)?(?:def|class)\s+(\w+)", re.M),
     "javascript": re.compile(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|interface|type|enum)\s+(\w+)", re.M),
     "go": re.compile(r"^(?:func\s+(?:\([^)]*\)\s*)?|type\s+)(\w+)", re.M),
-    "java": re.compile(r"^\s*(?:public|protected|private|static|final|abstract|\s)*(?:class|interface|enum|record)\s+(\w+)", re.M),
-    "rust": re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:fn|struct|enum|trait|type)\s+(\w+)", re.M),
-    "ruby": re.compile(r"^\s*(?:def|class|module)\s+([\w\.]+)", re.M),
+    "java": re.compile(r"^[ \t]*(?:public|protected|private|static|final|abstract|[ \t])*(?:class|interface|enum|record)\s+(\w+)", re.M),
+    "rust": re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:fn|struct|enum|trait|type)\s+(\w+)", re.M),
+    "ruby": re.compile(r"^[ \t]*(?:def|class|module)\s+([\w\.]+)", re.M),
+    "shell": re.compile(r"^[ \t]*(?:function\s+([\w\-]+)|([\w\-]+)\s*\(\)\s*\{)", re.M),
 }
 SYMBOL_RX["typescript"] = SYMBOL_RX["javascript"]
-SYMBOL_RX["kotlin"] = re.compile(r"^\s*(?:\w+\s+)*(?:fun|class|interface|object)\s+(\w+)", re.M)
+SYMBOL_RX["kotlin"] = re.compile(r"^[ \t]*(?:\w+[ \t]+)*(?:fun|class|interface|object)\s+(\w+)", re.M)
 
 
 # ---------------------------------------------------------------- helpers
@@ -199,19 +204,90 @@ def role_of(path: str, head: str) -> str:
     return "src"
 
 
+def shebang_lang(path: Path):
+    """Language of an extensionless script from its shebang line, else None."""
+    try:
+        with open(path, "rb") as fh:
+            first = fh.readline(128).decode(errors="ignore")
+    except OSError:
+        return None
+    if not first.startswith("#!"):
+        return None
+    words = first[2:].split()
+    if words and words[0].rsplit("/", 1)[-1] == "env":  # "#!/usr/bin/env [-S] python3 -u"
+        words = [w for w in words[1:] if not w.startswith("-")]
+    if not words:
+        return None
+    return SHEBANG_LANGS.get(re.sub(r"[\d.]+$", "", words[0].rsplit("/", 1)[-1]))
+
+
+def lang_of(rel: str):
+    """Language of a repo file: by suffix, or by shebang for files without one."""
+    suffix = Path(rel).suffix
+    if suffix:
+        return LANGS.get(suffix)
+    return shebang_lang(ROOT / rel)
+
+
+def ignore_rules():
+    """Compiled .ctxignore patterns (gitignore syntax: globs, **, trailing /, leading /, ! negation)."""
+    try:
+        lines = (ROOT / IGNORE_FILE).read_text().splitlines()
+    except OSError:
+        return []
+    rules = []
+    for line in lines:
+        pat = line.strip()
+        if not pat or pat.startswith("#"):
+            continue
+        negate = pat.startswith("!")
+        pat = pat[1:] if negate else pat
+        dir_only = pat.endswith("/")
+        pat = pat.rstrip("/")
+        anchored = "/" in pat  # a leading or middle slash anchors to the repo root
+        pat = pat.lstrip("/")
+        rx, i = "", 0
+        while i < len(pat):
+            if pat.startswith("**/", i):
+                rx, i = rx + "(?:.*/)?", i + 3
+            elif pat.startswith("**", i):
+                rx, i = rx + ".*", i + 2
+            elif pat[i] == "*":
+                rx, i = rx + "[^/]*", i + 1
+            elif pat[i] == "?":
+                rx, i = rx + "[^/]", i + 1
+            elif pat[i] == "[" and "]" in pat[i + 1:]:
+                j = pat.index("]", i + 1)
+                rx, i = rx + "[" + pat[i + 1:j].replace("!", "^", 1) + "]", j + 1
+            else:
+                rx, i = rx + re.escape(pat[i]), i + 1
+        prefix = "" if anchored else "(?:.*/)?"
+        rules.append((re.compile(prefix + rx + ("/" if dir_only else "(?:/|$)")), negate))
+    return rules
+
+
+def ignored(rel: str, rules) -> bool:
+    hit = False
+    for rx, negate in rules:  # last matching rule wins, as in gitignore
+        if rx.match(rel):
+            hit = not negate
+    return hit
+
+
 def list_files():
+    rules = ignore_rules()
+    keep = lambda f: f and not any(part in SKIP_DIRS for part in f.split("/")[:-1]) and \
+        not f.startswith((".ctx/", ".claude/")) and not ignored(f, rules)
     if (ROOT / ".git").exists():
         code, out, _ = sh(["git", "ls-files", "-co", "--exclude-standard"])
         if code == 0:
-            return [f for f in out.splitlines()
-                    if f and not any(part in SKIP_DIRS for part in f.split("/")[:-1])
-                    and not f.startswith((".ctx/", ".claude/"))]
+            return [f for f in out.splitlines() if keep(f)]
     out = []
     for dp, dns, fns in os.walk(ROOT):
         dns[:] = [d for d in dns if d not in SKIP_DIRS]
         for fn in fns:
             out.append(os.path.relpath(os.path.join(dp, fn), ROOT).replace(os.sep, "/"))
-    return out
+    return [f for f in out if keep(f)]
 
 
 # ---------------------------------------------------------------- build-index
@@ -320,6 +396,59 @@ def mine_git(fileset):
     return hist, commits
 
 
+CI_SKIP = re.compile(r"\$\{\{|\b(install|deploy|publish|push|release|login|upload|npm ci|docker|kubectl|helm|"
+                     r"terraform|sudo|apt-get|brew|curl|wget)\b")
+CI_KINDS = [  # first match wins
+    ("test", re.compile(r"\b(unittest|pytest|tox|nox|go test|cargo test|(npm|yarn|pnpm)( run)? test|jest|vitest|"
+                        r"mocha|rspec|rake test|mvn( -\S+)* (test|verify)|gradlew? test|ctest|make (test|tests))\b")),
+    ("lint", re.compile(r"\b(go vet|golangci-lint|staticcheck|ruff|flake8|pylint|mypy|pyright|black --check|eslint|"
+                        r"prettier --check|tsc --noEmit|cargo clippy|cargo fmt --check|gofmt -l|shellcheck|rubocop|"
+                        r"(make|npm run|yarn|pnpm) (lint|check|typecheck|vet))\b")),
+    ("build", re.compile(r"\b(go build|cargo build|(npm|yarn|pnpm)( run)? build|mvn( -\S+)* package|"
+                         r"gradlew? (build|assemble)|make build)\b")),
+]
+
+
+def ci_kind(cmd):
+    """test / lint / build for a CI step worth running locally, else None."""
+    if CI_SKIP.search(cmd):
+        return None
+    return next((kind for kind, rx in CI_KINDS if rx.search(cmd)), None)
+
+
+def ci_run_lines(text):
+    """Shell lines of the `run:` steps in a CI workflow, including `run: |` blocks.
+
+    Inside a block, a bare `cd <dir>` line is carried into the lines after it."""
+    out, lines, i = [], text.splitlines(), 0
+    while i < len(lines):
+        m = re.match(r"^(\s*)(?:-\s+)?run:\s*(.*?)\s*$", lines[i])
+        i += 1
+        if not m:
+            continue
+        value = m.group(2)
+        if not re.fullmatch(r"[|>][-+]?", value):
+            if value and not value.startswith("#"):
+                out.append(value.strip("\"'"))
+            continue
+        indent, cd, buf = len(m.group(1)), "", ""
+        while i < len(lines) and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) > indent):
+            line = lines[i].strip()
+            i += 1
+            if not line or line.startswith("#"):
+                continue
+            if line.endswith("\\"):  # shell line continuation
+                buf += line[:-1].strip() + " "
+                continue
+            line, buf = buf + line, ""
+            step = re.fullmatch(r"cd\s+(\S+)", line)
+            if step:
+                cd = f"cd {step.group(1)} && "
+            else:
+                out.append(cd + line)
+    return out
+
+
 def detect_commands(files):
     cands = []  # (cmd, kind, source)
     if "Makefile" in files:
@@ -347,18 +476,78 @@ def detect_commands(files):
     if "pytest" in py_meta:
         cands.append(("python3 -m pytest -q", "test", "pyproject/requirements"))
     ci_runs = []
-    for f in files:
+    for f in sorted(files):
         if f.startswith(".github/workflows/") and f.endswith((".yml", ".yaml")) or f == ".gitlab-ci.yml":
-            for m in re.finditer(r"^\s*-?\s*run:\s*(.+)$", (ROOT / f).read_text(errors="ignore"), re.M):
-                ci_runs.append(m.group(1).strip().strip('"\''))
+            ci_runs += ci_run_lines((ROOT / f).read_text(errors="ignore"))
+    for run in ci_runs:  # CI steps that check the code are candidates too; installs and deploys are not
+        kind = ci_kind(run)
+        if kind:
+            cands.append((run, kind, "ci"))
     seen, result = set(), []
     for cmd, kind, src in cands:
         if cmd in seen:
             continue
         seen.add(cmd)
         result.append({"cmd": cmd, "kind": kind, "source": src, "in_ci": cmd in ci_runs, "verified": None})
-    order = {"format": 0, "lint": 1, "build": 2, "test": 3}
+    order = {k: i for i, k in enumerate(CMD_KINDS)}
     return sorted(result, key=lambda c: (not c["in_ci"], order.get(c["kind"], 9))), ci_runs
+
+
+CMD_KINDS = ("format", "lint", "build", "test")
+
+
+def merge_commands(detected, previous, ci_runs):
+    """Detected commands plus the agent's `source: manual` ones, keeping earlier verification results.
+
+    A manual command with `replaces: <cmd>` is a fixed invocation: the detected one it names is dropped."""
+    manual = [c for c in previous if c.get("source") == "manual" and c.get("cmd")]
+    replaced = {c.get("replaces") for c in manual}
+    old = {c["cmd"]: c for c in previous if c.get("cmd")}
+    out = [c for c in detected if c["cmd"] not in replaced]
+    for c in out:  # a plain re-index keeps earlier verification results
+        o = old.get(c["cmd"])
+        if o and o.get("verified") is not None:
+            c.update({k: o[k] for k in ("verified", "exit", "seconds", "tail") if k in o})
+    have = {c["cmd"] for c in out}
+    for c in manual:
+        if c["cmd"] not in have:
+            out.append({**c, "in_ci": c["cmd"] in ci_runs})
+    order = {k: i for i, k in enumerate(CMD_KINDS)}
+    return sorted(out, key=lambda c: (not c["in_ci"], order.get(c["kind"], 9)))
+
+
+def verify_command(c):
+    t0 = time.time()
+    code, out, err = sh(c["cmd"], timeout=600)
+    c.update(verified=code == 0, exit=code, seconds=round(time.time() - t0, 1))
+    c.pop("tail", None)
+    if code != 0:
+        c["tail"] = (out + err).strip().splitlines()[-5:]
+
+
+def cmd_add_command(args):
+    """Record a command the agent added or fixed, so re-index keeps it."""
+    rest = [a for i, a in enumerate(args) if a not in ("--replaces", "--no-verify")
+            and (i == 0 or args[i - 1] != "--replaces")]
+    if len(rest) < 2 or rest[0] not in CMD_KINDS:
+        sys.exit(f"ctxh add-command {'|'.join(CMD_KINDS)} \"<cmd>\" [--replaces \"<detected cmd>\"] [--no-verify]")
+    if not opted_in():
+        sys.exit("this repo has no .ctx/ yet: run the ctx-harness build skill (/ctx-harness:build)")
+    data = load_json(COMMANDS, {}) or {}
+    ci_runs = data.get("ci_runs", [])
+    entry = {"cmd": " ".join(rest[1:]), "kind": rest[0], "source": "manual", "verified": None}
+    replaces = opt(args, "--replaces")
+    if replaces:
+        entry["replaces"] = replaces
+    entry["in_ci"] = entry["cmd"] in ci_runs
+    if "--no-verify" not in args:
+        verify_command(entry)
+    others = [c for c in data.get("commands", []) if c.get("cmd") not in (entry["cmd"], replaces)]
+    data["commands"] = merge_commands([c for c in others if c.get("source") != "manual"], others + [entry], ci_runs)
+    write_json(COMMANDS, data)
+    state = {True: "verified", False: f"failed (exit {entry.get('exit')})", None: "not verified"}[entry["verified"]]
+    print(f"added manual {entry['kind']} command: {entry['cmd']} ({state})"
+          + (f"; replaces {replaces}" if replaces else ""))
 
 
 def cmd_build_index(args):
@@ -370,13 +559,12 @@ def cmd_build_index(args):
         m = re.search(r"^module\s+(\S+)", (ROOT / gm).read_text(errors="ignore"), re.M)
         if m:
             go_module[m.group(1)] = gm[:-len("go.mod")]
+    lang_by_file = {f: lang for f in files if (lang := lang_of(f))}
     stem_index = defaultdict(list)
-    for f in files:
-        if Path(f).suffix in LANGS:
-            stem = f.rsplit(".", 1)[0].lower()
-            parts = stem.split("/")
-            for i in range(len(parts)):
-                stem_index["/".join(parts[i:])].append(f)
+    for f in lang_by_file:
+        parts = (f.rsplit(".", 1)[0] if Path(f).suffix else f).lower().split("/")
+        for i in range(len(parts)):
+            stem_index["/".join(parts[i:])].append(f)
 
     nodes, langs, entry, manifests = {}, Counter(), [], []
     for f in files:
@@ -384,7 +572,7 @@ def cmd_build_index(args):
         if name in MANIFESTS or f.startswith(".github/workflows/"):
             if f.count("/") <= 3:
                 manifests.append(f)
-        lang = LANGS.get(Path(f).suffix)
+        lang = lang_by_file.get(f)
         if not lang:
             continue
         try:
@@ -393,7 +581,8 @@ def cmd_build_index(args):
             continue
         role = role_of(f, text[:400])
         langs[lang] += 1
-        if name in ENTRY_NAMES or "__name__ == \"__main__\"" in text or "__name__ == '__main__'" in text:
+        if name in ENTRY_NAMES or "__name__ == \"__main__\"" in text or "__name__ == '__main__'" in text \
+                or not Path(f).suffix:  # extensionless shebang scripts are run directly
             if role == "src":
                 entry.append(f)
         imports = []
@@ -406,7 +595,7 @@ def cmd_build_index(args):
         rx = SYMBOL_RX.get(lang)
         if rx:
             for m in rx.finditer(text):
-                symbols.append([m.group(1), text.count("\n", 0, m.start()) + 1])
+                symbols.append([m.group(m.lastindex), text.count("\n", 0, m.start()) + 1])
         nodes[f] = {"lang": lang, "role": role, "module": module_of(f), "lines": text.count("\n") + 1,
                     "sha": hashlib.sha1(text.encode()).hexdigest()[:12], "imports": imports,
                     "symbols": symbols[:200]}
@@ -440,20 +629,11 @@ def cmd_build_index(args):
                 "rdeps": sorted(v["rdeps"]), "tests": sorted(v["tests"])} for k, v in modules.items()}
 
     commands, ci_runs = detect_commands(fileset)
-    previous = {c["cmd"]: c for c in (load_json(COMMANDS, {}) or {}).get("commands", [])}
-    for c in commands:  # a plain re-index keeps earlier verification results
-        old = previous.get(c["cmd"])
-        if old and old.get("verified") is not None:
-            c.update({k: old[k] for k in ("verified", "exit", "seconds", "tail") if k in old})
+    commands = merge_commands(commands, (load_json(COMMANDS, {}) or {}).get("commands", []), ci_runs)
     if "--verify" in args:
         for c in commands:
-            if c["kind"] == "format":
-                continue
-            t1 = time.time()
-            code, out, err = sh(c["cmd"], timeout=600)
-            c.update(verified=code == 0, exit=code, seconds=round(time.time() - t1, 1))
-            if code != 0:
-                c["tail"] = (out + err).strip().splitlines()[-5:]
+            if c["kind"] != "format":
+                verify_command(c)
     _, head, _ = sh(["git", "rev-parse", "--short", "HEAD"])
     graph = {"version": 1, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "head": head.strip(),
              "commits_mined": commits,
@@ -652,7 +832,10 @@ def index_lag(g):
     code, out, _ = sh(["git", "diff", "--name-only", g["head"], "HEAD"])
     if code != 0:
         return None
-    return [f for f in out.splitlines() if Path(f).suffix in LANGS and not f.startswith((".ctx/", ".claude/"))]
+    rules = ignore_rules()
+    return [f for f in out.splitlines()
+            if not f.startswith((".ctx/", ".claude/")) and not ignored(f, rules)
+            and (f in g.get("files", {}) or lang_of(f))]  # deleted files count if they were indexed
 
 
 def stale_report(include_index=True):
@@ -985,7 +1168,7 @@ def unreviewed_edit(path: Path):
             if name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
                 f = inp.get("file_path") or inp.get("notebook_path") or ""
                 rel = os.path.relpath(f, ROOT) if os.path.isabs(f) else f
-                if Path(f).suffix in LANGS and not rel.startswith((".ctx", "..")):
+                if f and not rel.startswith((".ctx", "..")) and lang_of(rel):
                     last_edit, reviewed_after = c.get("id"), False
             elif name in ("Task", "Agent") and str(inp.get("subagent_type", "")).endswith("reviewer"):
                 reviewed_after = True
@@ -1028,8 +1211,8 @@ def cmd_version(_):
 COMMANDS_MAP = {
     "build-index": cmd_build_index, "skeleton": cmd_skeleton, "q": cmd_q, "anchor": cmd_anchor,
     "stale": cmd_stale, "check": cmd_check, "signals": cmd_signals, "usage": cmd_usage,
-    "stats": cmd_stats, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop, "hook-prompt": cmd_hook_prompt,
-    "version": cmd_version,
+    "stats": cmd_stats, "add-command": cmd_add_command, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop,
+    "hook-prompt": cmd_hook_prompt, "version": cmd_version,
 }
 
 if __name__ == "__main__":
