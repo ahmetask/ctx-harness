@@ -87,7 +87,7 @@ Compaction fires `SessionStart` with source `compact`, which already re-ran `hoo
 The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ctx/tasks/active.md`, or a planner call in the session), before the review gate; both share `gate_once` and `.ctx/tmp/gates/<session>.json`. `CTXH_PLAN_GATE=0` turns it off. See `.ctx/tasks/done/T09-plan-gate.md`.
 
 ### T19 · Review gate outside the agent
-- **Problem:** the review gate only exists inside Claude Code sessions. Other agents and humans bypass it.
+- **Problem:** the review gate only exists inside Claude Code sessions. Other agents and humans bypass it. Inside a session it is also blind to edits made through the shell: in the T20 pilot, an agent edited a file with `cat >>` and the gate never fired (see `docs/benchmark.md`). Checking `git diff` instead of edit-tool calls would cover both.
 - **Done when:** an optional pre-commit or CI check flags code changes that have no reviewer record (for example a review entry in the task's progress log or a gate state file), documented as opt-in.
 
 ## Retrieval
