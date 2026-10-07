@@ -1,0 +1,7 @@
+{
+  "extraKnownMarketplaces": {
+    "ctx-harness": { "source": { "source": "github", "repo": "ahmetask/ctx-harness" } }
+  },
+  "enabledPlugins": { "ctx-harness@ctx-harness": true },
+  "permissions": { "allow": ["Bash(ctxh *)"] }
+}
