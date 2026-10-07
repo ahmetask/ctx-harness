@@ -478,6 +478,66 @@ class ManualCommands(unittest.TestCase):
             repo.cleanup()
 
 
+class PlanGate(unittest.TestCase):
+    """3+ code files changed without a plan: the Stop hook says so once."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+        self.active = self.repo.root / ".ctx" / "tasks" / "active.md"
+        self.active.parent.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def session(self, files, extra=(), session_id="p1", env=None):
+        """Edit each file, then run the reviewer, so only the plan gate can block."""
+        tp = self.repo.root / f"{session_id}.jsonl"
+        events = [("Edit", {"file_path": str(self.repo.root / f)}) for f in files]
+        events += list(extra)
+        events.append(("Agent", {"subagent_type": "ctx-harness:reviewer", "prompt": "review"}))
+        transcript(tp, events)
+        return self.repo.ctxh("hook-stop", env=env, stdin=json.dumps(
+            {"session_id": session_id, "transcript_path": str(tp)})).stdout
+
+    THREE = ["app/orders/service.py", "app/payments/client.py", "app/common/retry.py"]
+
+    def test_three_unplanned_files_block_once(self):
+        out = self.session(self.THREE)
+        self.assertIn("plan gate", json.loads(out)["reason"])
+        self.assertIn("ctx-harness:planner", json.loads(out)["reason"])
+        self.assertEqual(self.session(self.THREE), "")  # same state, never loops
+
+    def test_two_files_or_an_active_plan_pass(self):
+        self.assertEqual(self.session(self.THREE[:2], session_id="p2"), "")
+        self.active.write_text("# T0x\n\n## Steps\n1. do the thing\n")
+        self.assertEqual(self.session(self.THREE, session_id="p3"), "")
+
+    def test_a_planner_call_counts_as_the_plan(self):
+        # The plan may already be filed under done/ by the time the session stops.
+        out = self.session(self.THREE, extra=[("Agent", {"subagent_type": "ctx-harness:planner",
+                                                         "prompt": "plan the change"})], session_id="p4")
+        self.assertEqual(out, "")
+
+    def test_off_switch_leaves_the_review_gate_alone(self):
+        self.assertEqual(self.session(self.THREE, session_id="p5", env={"CTXH_PLAN_GATE": "0"}), "")
+        tp = self.repo.root / "p6.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(self.repo.root / f)}) for f in self.THREE])
+        out = self.repo.ctxh("hook-stop", env={"CTXH_PLAN_GATE": "0"}, stdin=json.dumps(
+            {"session_id": "p6", "transcript_path": str(tp)})).stdout
+        self.assertIn("review gate", json.loads(out)["reason"])
+
+    def test_both_gates_fire_in_turn(self):
+        tp = self.repo.root / "p7.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(self.repo.root / f)}) for f in self.THREE])
+        payload = json.dumps({"session_id": "p7", "transcript_path": str(tp)})
+        self.assertIn("plan gate", json.loads(self.repo.ctxh("hook-stop", stdin=payload).stdout)["reason"])
+        self.active.write_text("# plan\n")
+        self.assertIn("review gate", json.loads(self.repo.ctxh("hook-stop", stdin=payload).stdout)["reason"])
+        self.assertEqual(self.repo.ctxh("hook-stop", stdin=payload).stdout, "")
+
+
 class TranscriptFixtures(unittest.TestCase):
     """Checked-in Claude Code transcripts: the format the whole measurement side depends on."""
 

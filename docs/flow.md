@@ -131,7 +131,7 @@ sequenceDiagram
 
 ## 5. Stop hook
 
-The Stop hook runs after every turn. It handles measurement plus a one-time review gate.
+The Stop hook runs after every turn. It handles measurement plus two one-time gates: a plan gate for changes that spread over 3+ code files, then the review gate. Each blocks at most once per state, so neither can loop.
 
 ```mermaid
 sequenceDiagram
@@ -149,10 +149,13 @@ sequenceDiagram
     CC->>X: hook-stop (transcript path)
     X->>X: sum tokens, count steps
     X->>F: metrics/ + traces/
-    alt code edited after the last reviewer run (first time)
+    alt 3+ code files changed, no plan in tasks/active.md (first time)
+        X-->>CC: block: call the planner
+        CC-->>C: continue with a plan
+    else code edited after the last reviewer run (first time)
         X-->>CC: block: run the reviewer
         CC-->>C: continue with review
-    else reviewed, or already blocked once
+    else planned and reviewed, or already blocked once
         X-->>CC: allow stop
     end
 ```
