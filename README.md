@@ -106,7 +106,7 @@ ctxh add-command test "<cmd>" [--replaces "<detected cmd>"]   # keep a fixed or 
 
 `q search` is a keyword fallback for questions phrased in domain terms. It ranks every symbol by its split name plus the comments above it and the docstring or comments at the top of its body, as well as loose comment blocks and markdown sections. When `q find` has no symbol by that name, it answers with the same ranking instead of nothing.
 
-Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). A directory holding a package manifest (`package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, a plugin's `.claude-plugin/plugin.json` and so on) is a module; elsewhere modules are top-level folders, one level deeper under `src/`, `internal/`, `packages/` and similar. Markdown files are indexed as docs: `q find` matches their headings and `q cochange` pairs them with the code they change with, but they never count as code for the gates, `q hot` or staleness. `build-index` and `ctxh check` flag a card whose `module:` is not in the index.
+Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. If the `tree_sitter` package and a language's grammar (`tree-sitter-python`, `-go`, `-javascript`, `-typescript`, `-java`, `-rust`, `-ruby`) are installed for the Python that runs `ctxh`, that language is parsed from its syntax tree instead. That catches nested definitions, class methods and multi-line imports, and ignores code-like text inside strings. Nothing changes when they aren't installed. `graph.json` records which parser ran per language, and `CTXH_PARSER=regex` forces the regexes. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). A directory holding a package manifest (`package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, a plugin's `.claude-plugin/plugin.json` and so on) is a module; elsewhere modules are top-level folders, one level deeper under `src/`, `internal/`, `packages/` and similar. Markdown files are indexed as docs: `q find` matches their headings and `q cochange` pairs them with the code they change with, but they never count as code for the gates, `q hot` or staleness. `build-index` and `ctxh check` flag a card whose `module:` is not in the index.
 
 **What gets indexed.** Every file git tracks, except dependency and build folders, `testdata/`, and paths matched by a `.ctxignore` at the repo root. It uses gitignore syntax and keeps fixtures, vendored samples and test data out of the index and command detection:
 
@@ -192,6 +192,7 @@ Curation should follow merges, not run during a task. Options:
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
 | `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check and `ctxh review-check` |
 | `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
+| `CTXH_PARSER=regex` | Use the regex parser even when tree-sitter is installed |
 | `CTXH_TOOL=<name>` | Agent adapter to load from `plugins/ctx-harness/adapters/` (default `claude`) |
 
 ## Development
@@ -210,7 +211,7 @@ To verify a change on a realistic repo, `bench/sandbox.py` materializes the shop
 
 ## Limits
 
-- **Parsing:** import and symbol parsing is regex-based. Tree-sitter would make it more precise.
+- **Parsing:** import and symbol parsing is regex-based unless tree-sitter is installed (optional). There is no call graph either way.
 - **Token accounting:** reads Claude Code's transcript format (in its adapter), which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
 - **Local traces:** traces stay on each machine. For team-wide curation, ship them to a shared store, such as Redis, and point the curator there.
 - **Gates fire at the end:** both the plan and review checks run in the Stop hook, so they catch an unplanned or unreviewed change when the session tries to finish rather than when it starts. A PreToolUse gate would interrupt mid-change; this costs a turn instead.

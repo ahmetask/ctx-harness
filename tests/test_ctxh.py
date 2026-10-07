@@ -756,6 +756,43 @@ class InitTargets(unittest.TestCase):
             bare.cleanup()
 
 
+try:
+    import tree_sitter  # noqa: F401  (optional: CI's tree-sitter job installs it, the default job does not)
+    HAVE_TREE_SITTER = True
+except ImportError:
+    HAVE_TREE_SITTER = False
+
+
+class Parsers(unittest.TestCase):
+    """Tree-sitter when installed, regexes otherwise; the graph says which one ran per language."""
+
+    def test_regex_is_recorded_when_forced_or_unavailable(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            repo.ctxh("build-index", env={"CTXH_PARSER": "regex"})
+            stack = json.loads((repo.root / ".ctx" / "graph.json").read_text())["stack"]
+            self.assertEqual(stack["parsers"], {"python": "regex"})
+        finally:
+            repo.cleanup()
+
+    @unittest.skipUnless(HAVE_TREE_SITTER, "tree_sitter is not installed")
+    def test_tree_sitter_finds_what_regexes_miss(self):
+        m = load_ctxh()
+        py = "def outer():\n" + "            def deeply_nested():\n                pass\n" \
+             + 'DOC = """\ndef not_code():\n"""\nfrom .pkg import (\n    a,\n)\nimport os.path as p\n'
+        specs, symbols = m.ts_extract("python", "x.py", py)
+        self.assertEqual(symbols, [["outer", 1], ["deeply_nested", 2]])  # nested kept, string content ignored
+        self.assertEqual(specs, [".pkg", "os.path"])
+        js = "import {\n  a,\n} from './a';\nconst b = require('./b');\nexport class Router {\n  route() {}\n}\n"
+        specs, symbols = m.ts_extract("javascript", "x.js", js)
+        self.assertEqual(specs, ["./a", "./b"])
+        self.assertEqual(symbols, [["b", 4], ["Router", 5], ["route", 6]])  # methods too
+        go = 'package x\n\nimport (\n\t"example.com/m/a"\n)\n\nfunc F() {\n\ttype key struct{}\n}\n'
+        self.assertEqual(m.ts_extract("go", "x.go", go), (["example.com/m/a"], [["F", 7], ["key", 8]]))
+        self.assertIsNone(m.ts_extract("kotlin", "x.kt", "fun f() {}"))  # no grammar: regex path
+
+
 class KeywordSearch(unittest.TestCase):
     """`ctxh q search` and the `q find` fallback: concept words find code through names, comments, docstrings."""
 

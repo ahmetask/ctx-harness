@@ -25,7 +25,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T08 | Mid-session context management (compaction) | context | P2 | done |
 | T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | done |
 | T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | done |
-| T11 | Optional tree-sitter parsing | retrieval | P3 | todo |
+| T11 | Optional tree-sitter parsing | retrieval | P3 | done |
 | T12 | Shared trace store for team-wide curation | learning | P3 | todo |
 | T13 | Split `ctxh` into tool-neutral core + Claude adapter | portability | P2 | done |
 | T14 | `ctxh init --target` instruction files for other agents | portability | P2 | done |
@@ -98,7 +98,8 @@ Opt-in `.ctx/reviews.json` (code path -> reviewed blob id), `ctxh review-record`
 - **Problem:** `ctxh q` is structural (imports, symbols, history). Questions phrased in domain terms ("where is the retry policy?") come back empty when names don't match, and the scout falls back to grep.
 - **Done when:** a zero-dependency fallback, for example `ctxh q search <terms>` using BM25 over symbols, docstrings and comments, answers concept queries with `file:line`. Empty-result rates in `ctxh signals` are compared before and after.
 
-### T11 · Optional tree-sitter parsing
+### T11 · Optional tree-sitter parsing (done)
+When `tree_sitter` and a grammar are importable, Python, Go, JS/TS, Java, Rust and Ruby are parsed from the syntax tree (`ts_extract`); otherwise the regexes run. The full suite passes both ways (a new CI job installs the grammars). On this repo and the shopd demo, the only differences are improvements: a nested Go type found, and fixture code inside test strings no longer indexed. See `.ctx/tasks/done/T11-tree-sitter.md`.
 - **Problem:** import and symbol extraction is regex-based. It misses nested definitions and multi-line imports, and has no call graph.
 - **Done when:** if `tree_sitter` is importable, it is used for supported languages, otherwise the regex path is used. Results on the existing tests are identical or better, and the stdlib-only default is preserved.
 
