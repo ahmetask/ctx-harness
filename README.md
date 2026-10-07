@@ -153,6 +153,27 @@ ctxh init --target agents-md,gemini   # several at once
 
 Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, plan to `.ctx/tasks/active.md` before touching 3+ files, and run `ctxh stale` at the end. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
 
+## Review gate outside the agent (opt-in)
+
+The Stop-hook review gate only sees edits a Claude Code session makes with its edit tools. Edits from other agents, from humans, or from an agent writing files through the shell get past it. For those, opt in to a review record that commits and CI can check:
+
+```bash
+ctxh review-check --install-hook     # creates .ctx/reviews.json and a pre-commit hook running `review-check --staged`
+ctxh review-record                   # after reviewing: stamp the current content of every changed code file
+ctxh review-record app/orders/service.py   # or specific files
+ctxh review-check                    # working tree vs HEAD; --staged for the index; --base origin/main for a branch
+```
+
+`.ctx/reviews.json` maps each reviewed code file to the git blob id of the content that was reviewed. Commit it with the change. Any edit after the review changes the blob, so the check fails again until the new content is reviewed. Once the file exists, Claude Code sessions write the record themselves when `ctx-harness:reviewer` runs after the last code edit.
+
+In CI, check a pull request against its base. This needs the history: `fetch-depth: 0`.
+
+```yaml
+- run: python3 path/to/ctx-harness/plugins/ctx-harness/bin/ctxh review-check --base origin/${{ github.base_ref }}
+```
+
+A record shows that someone ran `review-record` on that exact content. It doesn't show that the review was any good. `CTXH_REVIEW_GATE=0` skips the check. After updating the plugin, re-run `--install-hook`, because the hook points at the `ctxh` path it was installed from.
+
 ## Automating curation
 
 Curation should follow merges, not run during a task. Options:
@@ -166,7 +187,7 @@ Curation should follow merges, not run during a task. Options:
 |---|---|
 | `CTXH_DISABLED=1` | Harness off for the session: nothing is injected, and the run is recorded as `baseline` |
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
-| `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check |
+| `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check and `ctxh review-check` |
 | `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
 | `CTXH_TOOL=<name>` | Agent adapter to load from `plugins/ctx-harness/adapters/` (default `claude`) |
 

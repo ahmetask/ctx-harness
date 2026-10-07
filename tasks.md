@@ -33,7 +33,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T16 | Tool-neutral agent/skill prompts with per-tool generators | portability | P3 | todo |
 | T17 | Hook adapters for other agents | portability | P3 | todo |
 | T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | todo |
-| T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | todo |
+| T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
 | T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | todo |
 | T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
 
@@ -86,7 +86,8 @@ Compaction fires `SessionStart` with source `compact`, which already re-ran `hoo
 ### T09 · Hook-enforced plan gate (done)
 The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ctx/tasks/active.md`, or a planner call in the session), before the review gate; both share `gate_once` and `.ctx/tmp/gates/<session>.json`. `CTXH_PLAN_GATE=0` turns it off. See `.ctx/tasks/done/T09-plan-gate.md`.
 
-### T19 · Review gate outside the agent
+### T19 · Review gate outside the agent (done)
+Opt-in `.ctx/reviews.json` (code path -> reviewed blob id), `ctxh review-record`, `ctxh review-check [--staged | --base REF]`, `--install-hook` for pre-commit, and auto-recording from the Stop hook when the reviewer ran after the last edit. See `.ctx/tasks/done/T19-review-gate-outside.md`.
 - **Problem:** the review gate only exists inside Claude Code sessions. Other agents and humans bypass it. Inside a session it is also blind to edits made through the shell: in the T20 pilot, an agent edited a file with `cat >>` and the gate never fired (see `docs/benchmark.md`). Checking `git diff` instead of edit-tool calls would cover both.
 - **Done when:** an optional pre-commit or CI check flags code changes that have no reviewer record (for example a review entry in the task's progress log or a gate state file), documented as opt-in.
 

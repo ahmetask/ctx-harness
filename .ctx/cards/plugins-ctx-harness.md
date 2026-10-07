@@ -2,7 +2,7 @@
 module: plugins/ctx-harness
 updated: 2026-10-07
 anchors:
-  plugins/ctx-harness/bin/ctxh: fda73f20e91e
+  plugins/ctx-harness/bin/ctxh: fffa425f547e
   plugins/ctx-harness/protocol.md: f1a70dd90a28
   plugins/ctx-harness/hooks/hooks.json: 4291e4081215
   plugins/ctx-harness/adapters/claude.py: 027255c366c1
@@ -22,6 +22,7 @@ Invariants in code:
 - Gates (`cmd_hook_stop`, both from one `session_edits` pass, both via `gate_once` keyed on the last code-edit tool_use id in .ctx/tmp/gates/<session>.json, so neither can loop): the plan gate runs first and blocks when `PLAN_GATE_FILES` (3) distinct code files changed with no non-empty plan at .ctx/tasks/active.md and no `planner` call; then the review gate, where a review is any subagent whose `subagent_type` ends in `reviewer`. Edits under `.ctx/` or to files `lang_of` does not recognize count for neither. `CTXH_DISABLED=1` skips both.
 - `ctxh init --target` (`INIT_TARGETS`, `INIT_BLOCK`) writes a tool-neutral protocol between `<!-- ctx-harness:begin -->`/`end` markers via `upsert_block`; only the block is ever replaced, and an unchanged block means no write.
 - `hook-start` also runs after compaction and on resume (event `source` `compact`/`resume`); with a non-empty active plan it adds `plan_resume_note` (title + last `PLAN_TAIL` (8) `## Progress log` entries) instead of the one-line pointer.
+- Opt-in review record: .ctx/reviews.json (`REVIEWS`, committed; path -> git blob id). `review-check` compares changed code files (`--staged`: index blobs, `--base`: HEAD blobs, default: `git hash-object`), and the Stop hook calls `record_reviews` only when that file exists and a reviewer ran after the last edit.
 - A repo-level .ctx/protocol.md overrides the plugin `protocol.md` in `cmd_hook_start`.
 - Metrics/traces keep the newest `KEEP_RECORDS` (300) files; traces are written only for `harness` runs.
 - `ctxh check` limits: map 60 lines / 4000 bytes, card body 45 lines, learned 40 lines; flags `IMPERATIVE` phrasing and unfilled LLM placeholders from the skeleton.

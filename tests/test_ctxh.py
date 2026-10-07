@@ -756,6 +756,78 @@ class InitTargets(unittest.TestCase):
             bare.cleanup()
 
 
+class ReviewRecord(unittest.TestCase):
+    """The opt-in review gate outside the agent: .ctx/reviews.json, review-check, the pre-commit hook."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+        self.repo.commit("ctx")
+        self.svc = self.repo.root / "app/orders/service.py"
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def check(self, *args):
+        return self.repo.ctxh("review-check", *args, check=False)
+
+    def test_record_then_edit_again(self):
+        self.svc.write_text(self.svc.read_text() + "# change\n")
+        (self.repo.root / "README.txt").write_text("not code\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("  app/orders/service.py", r.stdout)
+        self.assertNotIn("README.txt", r.stdout)
+        self.assertIn("1 code files", self.repo.ctxh("review-record").stdout)
+        self.assertEqual(self.check().returncode, 0)
+        self.svc.write_text(self.svc.read_text() + "# again\n")
+        self.assertEqual(self.check().returncode, 1)
+        self.assertEqual(self.repo.ctxh("review-check", env={"CTXH_REVIEW_GATE": "0"}).returncode, 0)  # off switch
+
+    def test_staged_and_base_modes_and_the_pre_commit_hook(self):
+        self.assertIn("installed .git/hooks/pre-commit", self.repo.ctxh("review-check", "--install-hook").stdout)
+        self.assertEqual(json.loads((self.repo.root / ".ctx/reviews.json").read_text()), {})
+        self.repo.git("checkout", "-q", "-b", "feature")
+        self.svc.write_text(self.svc.read_text() + "# change\n")
+        self.repo.git("add", "-A")
+        self.assertEqual(self.check("--staged").returncode, 1)
+        blocked = subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "unreviewed"],
+                                 cwd=self.repo.root, env=self.repo.env(), capture_output=True, text=True)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.repo.ctxh("review-record", "app/orders/service.py")
+        self.repo.commit("reviewed")  # passes the hook
+        self.assertEqual(self.check("--base", "main").returncode, 0)
+        self.svc.write_text(self.svc.read_text() + "# sneaky\n")
+        self.repo.git("add", "-A")
+        self.repo.git("commit", "-q", "--no-verify", "-m", "bypass")
+        r = self.check("--base", "main")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("app/orders/service.py", r.stdout)
+
+    def test_hook_refuses_to_overwrite_a_foreign_pre_commit(self):
+        hook = self.repo.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nmake lint\n")
+        r = self.repo.ctxh("review-check", "--install-hook", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\nmake lint\n")
+
+    def test_stop_hook_records_after_a_reviewer_only_when_opted_in(self):
+        self.svc.write_text(self.svc.read_text() + "# change\n")
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(self.svc)}), ("Task", {"subagent_type": "ctx-harness:reviewer"})])
+        stop = lambda sid: self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": sid, "transcript_path": str(tp)}))
+        stop("a")
+        self.assertFalse((self.repo.root / ".ctx/reviews.json").exists())  # not opted in: nothing written
+        (self.repo.root / ".ctx/reviews.json").write_text("{}\n")
+        stop("b")
+        self.assertEqual(self.check().returncode, 0)
+        transcript(tp, [("Edit", {"file_path": str(self.svc)})])  # no reviewer after the edit: no record
+        self.svc.write_text(self.svc.read_text() + "# more\n")
+        stop("c")
+        self.assertEqual(self.check().returncode, 1)
+
+
 TOY_ADAPTER = """
 import json
 from pathlib import Path
