@@ -16,6 +16,7 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh signals                  aggregate agent traces into promotion candidates (curator input)
   ctxh usage <transcript> [--label L] [--task T]   tokens/steps of any agent session
   ctxh stats                    harness vs baseline comparison
+  ctxh init --target agents-md|gemini|cursor|aider   point another agent's instructions file at .ctx/
   ctxh version
   ctxh hook-start | hook-prompt | hook-stop   agent hook entry points
 
@@ -1169,6 +1170,75 @@ def cmd_signals(_):
         print("\ncoder notes pending review: .ctx/tasks/notes.md")
 
 
+# ---------------------------------------------------------------- init (instruction files for other agents)
+BLOCK_BEGIN, BLOCK_END = "<!-- ctx-harness:begin -->", "<!-- ctx-harness:end -->"
+INIT_TARGETS = {  # target -> (file, who reads it)
+    "agents-md": ("AGENTS.md", "Codex, GitHub Copilot's coding agent and other AGENTS.md readers"),
+    "gemini": ("GEMINI.md", "Gemini CLI"),
+    "cursor": (".cursor/rules/ctx-harness.mdc", "Cursor"),
+    "aider": ("CONVENTIONS.md", "Aider"),
+}
+INIT_BLOCK = """## Repository context (ctx-harness)
+
+This repo keeps compact, maintained context in `.ctx/`. Use it before exploring:
+
+- Start with `.ctx/map.md` (stack, modules, verified commands, fragile files). If `.ctx/tasks/active.md` exists, read it and continue from its progress log.
+- Ask the index before grep: `ctxh q find <symbol>`, `ctxh q rdeps|impact|cochange|tests|owner <file>`, `ctxh q module <file>`. Only the answer enters your context. Grep and read targeted ranges only when the index has no answer.
+- Before changing a module, read its card, `.ctx/cards/<module-with-dashes>.md`, and only that one. Gotchas from past tasks are in `.ctx/learned.md`.
+- Changing 3+ files, or the scope is unclear: write a plan to `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps, progress log) and get the user's approval before coding. Append to the progress log after each step.
+- Validate with the verified commands listed in the map.
+- Before finishing: review your own diff as a stranger would, run `ctxh stale`, and tell the user which cards are stale. Move the finished plan to `.ctx/tasks/done/`.
+- `.ctx/map.md`, `.ctx/cards/` and `.ctx/learned.md` are maintained by the curation step, not edited during a task.
+
+`ctxh` is the ctx-harness engine (`plugins/ctx-harness/bin/ctxh` in https://github.com/ahmetask/ctx-harness, Python 3 stdlib only); put its `bin/` on `PATH` or run it as `python3 <path>/ctxh`. Full protocol: https://github.com/ahmetask/ctx-harness/blob/main/plugins/ctx-harness/protocol.md"""
+
+
+def upsert_block(text, block):
+    """text with the marked block replaced, or appended when there is none."""
+    marked = f"{BLOCK_BEGIN}\n{block}\n{BLOCK_END}"
+    start, end = text.find(BLOCK_BEGIN), text.find(BLOCK_END)
+    if start != -1 and end > start:
+        return text[:start] + marked + text[end + len(BLOCK_END):]
+    return (text.rstrip("\n") + "\n\n" if text.strip() else "") + marked + "\n"
+
+
+def cmd_init(args):
+    """Write or update the instructions file of another coding agent so it uses .ctx/ and ctxh q."""
+    targets = [t for t in (opt(args, "--target") or "").split(",") if t]
+    bad = [t for t in targets if t not in INIT_TARGETS]
+    if not targets or bad:
+        sys.exit(f"ctxh init --target {'|'.join(INIT_TARGETS)}[,...]" + (f" (unknown: {', '.join(bad)})" if bad else ""))
+    for t in targets:
+        rel, who = INIT_TARGETS[t]
+        path = ROOT / rel
+        old = path.read_text() if path.exists() else ""
+        if t == "cursor":  # a rule file of its own: front matter makes Cursor apply it to every request
+            new = ("---\ndescription: Repository context from ctx-harness (.ctx/ and ctxh q)\nalwaysApply: true\n---\n"
+                   + upsert_block(old.split("---\n", 2)[2] if old.startswith("---\n") and old.count("---\n") >= 2
+                                  else old, INIT_BLOCK))
+        else:
+            new = upsert_block(old, INIT_BLOCK)
+        if new == old:
+            print(f"{rel}: unchanged ({who})")
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(new)
+            print(f"{rel}: {'updated' if old else 'created'} ({who})")
+        if t == "aider":
+            conf = ROOT / ".aider.conf.yml"
+            text = conf.read_text() if conf.exists() else ""
+            if "CONVENTIONS.md" in text:
+                pass
+            elif re.search(r"^read\s*:", text, re.M):
+                print("  .aider.conf.yml already has a `read:` entry: add CONVENTIONS.md to it so Aider loads the block")
+            else:
+                conf.write_text((text.rstrip("\n") + "\n" if text.strip() else "") + "read: CONVENTIONS.md\n")
+                print("  .aider.conf.yml: added `read: CONVENTIONS.md`")
+    if not opted_in():
+        print("no .ctx/ yet: build it with `ctxh build-index --verify && ctxh skeleton`, then fill .ctx/map.draft.md "
+              "and save it as .ctx/map.md (in Claude Code, /ctx-harness:build does all of this)")
+
+
 # ---------------------------------------------------------------- hooks
 def refresh_in_background():
     """Start a detached re-index; the session never waits for it."""
@@ -1330,7 +1400,7 @@ COMMANDS_MAP = {
     "build-index": cmd_build_index, "skeleton": cmd_skeleton, "q": cmd_q, "anchor": cmd_anchor,
     "stale": cmd_stale, "check": cmd_check, "signals": cmd_signals, "usage": cmd_usage,
     "stats": cmd_stats, "add-command": cmd_add_command, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop,
-    "hook-prompt": cmd_hook_prompt, "version": cmd_version,
+    "hook-prompt": cmd_hook_prompt, "version": cmd_version, "init": cmd_init,
 }
 
 if __name__ == "__main__":

@@ -678,6 +678,65 @@ class Modules(unittest.TestCase):
         self.assertIn("module 'plugins' is not in the index", check.stdout)
 
 
+class InitTargets(unittest.TestCase):
+    """`ctxh init --target` writes a marked, idempotent block into other agents' instruction files."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_each_target_is_written_once_and_points_at_ctx(self):
+        out = self.repo.ctxh("init", "--target", "agents-md,gemini,cursor,aider").stdout
+        files = {"AGENTS.md", "GEMINI.md", ".cursor/rules/ctx-harness.mdc", "CONVENTIONS.md"}
+        before = {f: (self.repo.root / f).read_text() for f in files}
+        for f, text in before.items():
+            self.assertIn(f"{f}: created", out)
+            self.assertEqual(text.count("<!-- ctx-harness:begin -->"), 1, f)
+            self.assertIn(".ctx/map.md", text)
+            self.assertIn("ctxh q find", text)
+            self.assertNotIn("ctx-harness:scout", text)  # no Claude-only helpers in another agent's file
+        self.assertTrue(before[".cursor/rules/ctx-harness.mdc"].startswith("---\ndescription:"))
+        self.assertIn("alwaysApply: true", before[".cursor/rules/ctx-harness.mdc"])
+        self.assertEqual((self.repo.root / ".aider.conf.yml").read_text(), "read: CONVENTIONS.md\n")
+        self.assertNotIn("no .ctx/ yet", out)
+        again = self.repo.ctxh("init", "--target", "agents-md,gemini,cursor,aider").stdout
+        self.assertEqual(again.count("unchanged"), 4)
+        self.assertEqual(before, {f: (self.repo.root / f).read_text() for f in files})
+
+    def test_text_around_the_block_is_kept_and_an_old_block_replaced(self):
+        agents = self.repo.root / "AGENTS.md"
+        agents.write_text("# House rules\n\nTabs.\n\n<!-- ctx-harness:begin -->\nold\n<!-- ctx-harness:end -->\n\n"
+                          "## After\nKeep me.\n")
+        self.assertIn("AGENTS.md: updated", self.repo.ctxh("init", "--target", "agents-md").stdout)
+        text = agents.read_text()
+        self.assertTrue(text.startswith("# House rules\n\nTabs.\n\n<!-- ctx-harness:begin -->\n## Repository"))
+        self.assertTrue(text.endswith("<!-- ctx-harness:end -->\n\n## After\nKeep me.\n"))
+        self.assertNotIn("\nold\n", text)
+
+    def test_aider_config_with_its_own_read_list_is_left_alone(self):
+        conf = self.repo.root / ".aider.conf.yml"
+        conf.write_text("read:\n  - STYLE.md\n")
+        out = self.repo.ctxh("init", "--target", "aider").stdout
+        self.assertIn("add CONVENTIONS.md to it", out)
+        self.assertEqual(conf.read_text(), "read:\n  - STYLE.md\n")
+
+    def test_unknown_target_and_missing_ctx(self):
+        r = self.repo.ctxh("init", "--target", "vim", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("agents-md|gemini|cursor|aider", r.stderr)
+        bare = Repo()
+        try:
+            out = bare.ctxh("init", "--target", "gemini").stdout
+            self.assertIn("no .ctx/ yet", out)
+            self.assertFalse((bare.root / ".ctx").exists())
+        finally:
+            bare.cleanup()
+
+
 TOY_ADAPTER = """
 import json
 from pathlib import Path

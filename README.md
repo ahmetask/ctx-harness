@@ -139,6 +139,20 @@ Sessions labeled `bootstrap` or `curate` count as overhead, and `stats` amortize
 
 All of this is read out of Claude Code's transcript JSONL, so a format change could zero the numbers and switch the review gate off without anyone noticing. Checked-in fixtures in [tests/fixtures/transcripts](tests/fixtures/transcripts) pin the parse, and when a real transcript yields no `usage` or no tool name the engine knows, `ctxh usage` fails with the reason and the Stop hook warns once on stderr instead of recording a row of zeros.
 
+## Other agents
+
+The index, queries and checks work for any coding agent. Only the hooks (automatic injection, freshness notices, the plan and review gates) and the helper subagents are Claude Code features. To point another agent at the harness, write its instructions file:
+
+```bash
+ctxh init --target agents-md      # AGENTS.md: Codex, GitHub Copilot's coding agent, and other AGENTS.md readers
+ctxh init --target gemini         # GEMINI.md: Gemini CLI
+ctxh init --target cursor         # .cursor/rules/ctx-harness.mdc, applied to every request
+ctxh init --target aider          # CONVENTIONS.md, plus `read: CONVENTIONS.md` in .aider.conf.yml
+ctxh init --target agents-md,gemini   # several at once
+```
+
+Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, plan to `.ctx/tasks/active.md` before touching 3+ files, and run `ctxh stale` at the end. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
+
 ## Automating curation
 
 Curation should follow merges, not run during a task. Options:

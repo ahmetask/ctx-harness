@@ -2,7 +2,7 @@
 module: plugins/ctx-harness
 updated: 2026-10-07
 anchors:
-  plugins/ctx-harness/bin/ctxh: 0d25050df7de
+  plugins/ctx-harness/bin/ctxh: 7e8c38640874
   plugins/ctx-harness/protocol.md: f1a70dd90a28
   plugins/ctx-harness/hooks/hooks.json: 4291e4081215
   plugins/ctx-harness/adapters/claude.py: a3b6cba2998f
@@ -20,6 +20,7 @@ Invariants in code:
 - Indexing and `index_lag` use `lang_of`: a suffix in `LANGS`, else a known shebang on an extensionless file (so `ctxh` itself is indexed). `.ctxignore` and `SKIP_DIRS` exclude paths from both indexing and command detection.
 - Background re-index is guarded by .ctx/tmp/index.lock, treated as held for 600s.
 - Gates (`cmd_hook_stop`, both from one `session_edits` pass, both via `gate_once` keyed on the last code-edit tool_use id in .ctx/tmp/gates/<session>.json, so neither can loop): the plan gate runs first and blocks when `PLAN_GATE_FILES` (3) distinct code files changed with no non-empty plan at .ctx/tasks/active.md and no `planner` call; then the review gate, where a review is any subagent whose `subagent_type` ends in `reviewer`. Edits under `.ctx/` or to files `lang_of` does not recognize count for neither. `CTXH_DISABLED=1` skips both.
+- `ctxh init --target` (`INIT_TARGETS`, `INIT_BLOCK`) writes a tool-neutral protocol between `<!-- ctx-harness:begin -->`/`end` markers via `upsert_block`; only the block is ever replaced, and an unchanged block means no write.
 - A repo-level .ctx/protocol.md overrides the plugin `protocol.md` in `cmd_hook_start`.
 - Metrics/traces keep the newest `KEEP_RECORDS` (300) files; traces are written only for `harness` runs.
 - `ctxh check` limits: map 60 lines / 4000 bytes, card body 45 lines, learned 40 lines; flags `IMPERATIVE` phrasing and unfilled LLM placeholders from the skeleton.

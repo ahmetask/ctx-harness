@@ -28,7 +28,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T11 | Optional tree-sitter parsing | retrieval | P3 | todo |
 | T12 | Shared trace store for team-wide curation | learning | P3 | todo |
 | T13 | Split `ctxh` into tool-neutral core + Claude adapter | portability | P2 | done |
-| T14 | `ctxh init --target` instruction files for other agents | portability | P2 | todo |
+| T14 | `ctxh init --target` instruction files for other agents | portability | P2 | done |
 | T15 | Configurable tool names for traces and the review gate | portability | P2 | done |
 | T16 | Tool-neutral agent/skill prompts with per-tool generators | portability | P3 | todo |
 | T17 | Hook adapters for other agents | portability | P3 | todo |
@@ -111,9 +111,8 @@ The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ct
 ### T13 · Split `ctxh` into core + Claude adapter (done)
 `bin/ctxh` is tool-neutral and loads `plugins/ctx-harness/adapters/<CTXH_TOOL>.py` (default `claude`). The adapter owns the project root, hook events in, context and block replies out, and a normalized trace out of the transcript; the interface is in `adapters/README.md`. Existing tests pass unchanged, and a toy adapter test drives hooks, metrics and both gates. See `.ctx/tasks/done/T13-T15-adapter.md`.
 
-### T14 · `ctxh init --target`
-- **Problem:** using the harness with Codex, Copilot, Cursor, Gemini CLI or Aider means hand-writing an instructions pointer.
-- **Done when:** `ctxh init --target agents-md|gemini|cursor|aider` writes or updates (idempotently, with a marked block) the target's instructions file. The block points to `.ctx/map.md` and the protocol and says to use `ctxh q` before grep. The README has a "Other agents" section.
+### T14 · `ctxh init --target` (done)
+`ctxh init --target agents-md|gemini|cursor|aider[,...]` writes a marked block into `AGENTS.md`, `GEMINI.md`, `.cursor/rules/ctx-harness.mdc` or `CONVENTIONS.md` (plus `read:` in `.aider.conf.yml`). Re-runs replace only the block, and the README has an "Other agents" section. See `.ctx/tasks/done/T14-init-targets.md`.
 
 ### T15 · Configurable tool names (done)
 The read / edit / shell / subagent mapping is the adapter's `TOOLS`; the engine only sees each call's role. Done with T13.
