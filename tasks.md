@@ -6,7 +6,7 @@ Known gaps, one task each. We work through them with the harness itself (this re
 
 1. Pick the next `todo` task below and tell the coder: "work on T0x from tasks.md".
 2. The coder asks `ctx-harness:planner` for a plan. The plan goes to `.ctx/tasks/active.md`, built from the task's **Problem** and **Done when**. Approve it before any code is written.
-3. Implement, run `python3 -m unittest discover -s tests`, then run `ctx-harness:reviewer` (the Stop hook enforces this).
+3. Implement, run `python3 -m unittest discover -s tests`, then run `ctx-harness:reviewer` (the Stop hook enforces this). For behavior a unit test can't show (hooks in a live session, indexing a real repo), also try it in the demo: `python3 bench/sandbox.py`, then the interactive command it prints or `--prompt "<task>"`.
 4. Move `active.md` to `.ctx/tasks/done/T0x-<name>.md`, set the status here to `done`, and run `/ctx-harness:curate` if `ctxh stale` reports cards.
 
 Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P1 (blocks dogfooding or measurement), P2 (core value), P3 (nice to have).

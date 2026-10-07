@@ -9,6 +9,7 @@ python3 bench/run.py --agent fake                      # offline, about 1 minute
 python3 bench/run.py --agent claude --repeats 3        # real runs with your Claude Code login
 python3 bench/run.py --agent claude --tasks t2,t4 --repeats 1 --model <model-id>
 python3 bench/report.py bench/results/<run>            # re-render a report
+python3 bench/sandbox.py [--prompt "<task>"]           # one demo repo to try a change in, not a measurement
 ```
 
 Requirements: git, Python 3.10+ and Go 1.22+. Real runs also need the `claude` CLI on `PATH`.
