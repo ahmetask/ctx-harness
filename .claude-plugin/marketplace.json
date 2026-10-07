@@ -1,0 +1,16 @@
+{
+  "name": "ctx-harness",
+  "description": "Context harness for Claude Code: automatic, repository-agnostic context for coding agents that costs fewer tokens than exploring from scratch.",
+  "owner": {
+    "name": "Ahmet Asik"
+  },
+  "plugins": [
+    {
+      "name": "ctx-harness",
+      "source": "./plugins/ctx-harness",
+      "description": "Builds and maintains compact repo context (.ctx/) and adds scout, planner, reviewer and card-writer agents around a single coding session.",
+      "category": "development",
+      "tags": ["context", "agents", "code-review", "planning"]
+    }
+  ]
+}
