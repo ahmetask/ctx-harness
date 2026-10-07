@@ -1,0 +1,10 @@
+{
+  "id": "t1-locate-idempotency",
+  "category": "locate",
+  "prompt": "Question only, do not change any code. When a payment attempt for an order is retried, what makes sure the customer is not charged twice? Write the answer to ANSWER.md at the repository root: the file path and the function name that guarantee it, and one sentence on how.",
+  "check": [
+    ["grep", "-q", "IdempotencyKey", "ANSWER.md"],
+    ["grep", "-q", "internal/payments/idempotency.go", "ANSWER.md"]
+  ],
+  "max_turns": 25
+}

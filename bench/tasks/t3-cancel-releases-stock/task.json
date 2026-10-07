@@ -1,0 +1,12 @@
+{
+  "id": "t3-cancel-releases-stock",
+  "category": "bugfix",
+  "prompt": "Bug report: after customers cancel unpaid orders, the products show as out of stock even though nothing was sold. For example, placing an order for 2 coffee mugs and cancelling it leaves the available mug count 2 lower than before. Cancelling an order must make its stock available again. Fix it and keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./internal/orders/"]
+  ],
+  "hidden": {
+    "hidden/hidden_cancel_test.go": "internal/orders/hidden_cancel_test.go"
+  },
+  "max_turns": 40
+}

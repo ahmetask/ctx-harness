@@ -1,0 +1,12 @@
+{
+  "id": "t5-price-filter",
+  "category": "feature",
+  "prompt": "Add price filters to the product listing: `GET /products` accepts optional `min_price` and `max_price` query parameters, in minor units (cents), both inclusive, combinable with the existing `q` search. Invalid values (not a non-negative integer) get a 400 response. Keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./internal/httpapi/"]
+  ],
+  "hidden": {
+    "hidden/hidden_price_filter_test.go": "internal/httpapi/hidden_price_filter_test.go"
+  },
+  "max_turns": 40
+}

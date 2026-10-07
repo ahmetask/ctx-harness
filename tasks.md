@@ -21,7 +21,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T04 | Module grouping and markdown-only modules | dogfooding | P2 | todo |
 | T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | todo |
 | T06 | Transcript parser fixtures and version guard | measurement | P1 | todo |
-| T07 | Benchmark suite and published harness-vs-baseline results | measurement | P2 | todo |
+| T07 | Benchmark platform with a demo repo | measurement | P1 | done |
 | T08 | Mid-session context management (compaction) | context | P2 | todo |
 | T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | todo |
 | T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | todo |
@@ -34,8 +34,10 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T17 | Hook adapters for other agents | portability | P3 | todo |
 | T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | todo |
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | todo |
+| T20 | Run the real benchmark and publish results | measurement | P1 | todo |
+| T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | todo |
 
-Suggested order: T01 → T02 → T03 → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest.
+Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest.
 
 ---
 
@@ -57,6 +59,10 @@ Suggested order: T01 → T02 → T03 → T06 → T13 → T15 → T09 → T04 →
 - **Problem:** `module_of` groups by the first path segment unless it is in `CONTAINERS`. So `plugins/ctx-harness/...` becomes module `plugins`, and a card for `plugins/ctx-harness` never matches a graph module, which means "new files" staleness can't fire. The plugin's real logic (agents, skills, protocol) is markdown, and the index doesn't model it.
 - **Done when:** modules group at a meaningful depth (for example the dir holding a manifest, or `plugins/<name>`), and `build-index` warns when a card's `module:` matches no graph module. Decide (in the plan) whether markdown prompt files get indexed as a "docs/prompts" role for `q find` and `cochange`.
 
+### T21 · Exclude fixture dirs from indexing
+- **Problem:** `list_files` indexes everything git tracks outside `SKIP_DIRS`. Since `bench/demo/template/` landed, the demo's 43 Go files dominate this repo's own index: `ctxh q hot` lists only demo files, `q find IdempotencyKey` answers from the fixture, and the nested `go.mod` adds `cd bench/demo/template && go ...` as this repo's commands. Any repo with fixtures, vendored samples or test data has the same problem.
+- **Done when:** a `.ctxignore` (gitignore-style patterns, read by `list_files` and `detect_commands`) excludes paths from the index and command detection. `testdata/` is skipped by default (Go convention). This repo ignores `bench/demo/` and `bench/tasks/`. `ctxh q hot` here lists engine and bench code, and a test covers it.
+
 ### T05 · Document the dogfooding setup
 - **Problem:** `.claude/settings.json` enables the published plugin from GitHub (`main`), but contributors edit the working tree. With `claude --plugin-dir ./plugins/ctx-harness` both copies may load, and it isn't clear which hooks and agents win.
 - **Done when:** the README "Development" section explains how to run this repo against local plugin changes without double hooks (verify actual Claude Code behavior), and the settings are adjusted if a cleaner option exists (for example a local directory marketplace).
@@ -67,9 +73,12 @@ Suggested order: T01 → T02 → T03 → T06 → T13 → T15 → T09 → T04 →
 - **Problem:** token accounting and the review gate depend on Claude Code's transcript JSONL format (`usage`, `isSidechain`, `subagents/`, tool names). A format change silently zeroes metrics or disables the gate.
 - **Done when:** checked-in fixture transcripts (main session plus subagent) have tests that assert the parsed tokens, files, commands and gate decision. `ctxh usage` and the Stop hook warn, once, when a transcript yields no usage or no recognized tool calls instead of recording zeros.
 
-### T07 · Benchmark suite and published results
-- **Problem:** the README claims the harness is cheaper than a plain session, but no paired results exist yet. Single runs are noisy.
-- **Done when:** a small script runs N tasks × K repeats with and without the harness on 2 to 3 public repos and produces a `ctxh stats`-style report (medians, spread, break-even including bootstrap and curate). Results are summarized in `docs/`.
+### T07 · Benchmark platform with a demo repo (done)
+- Built `bench/`: a Go demo repo (`shopd`) with scripted history, 6 tasks with hidden checks and reference solutions, a runner (`claude`, `fake` and `noop` agents) and a report. See `bench/README.md` and `.ctx/tasks/done/T07-benchmark-platform.md`.
+
+### T20 · Run the real benchmark and publish results
+- **Problem:** the platform exists, but no real harness-vs-baseline numbers do yet. The README's claim that the harness is cheaper is still unproven.
+- **Done when:** `python3 bench/run.py --agent claude --repeats 3` has run on at least one model, and its `report.md` plus a short reading (where the harness wins or loses, and why) is in `docs/benchmark.md`. Rerun after T01–T03, since they change what the harness indexes on Go repos. Optional later: a second demo repo in another language, or a public repo with tasks.
 
 ## Context management and enforcement
 

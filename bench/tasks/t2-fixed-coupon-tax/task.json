@@ -1,0 +1,12 @@
+{
+  "id": "t2-fixed-coupon-tax",
+  "category": "bugfix",
+  "prompt": "Bug report: with the TENOFF coupon ($10.00 off) on a single $100.00 desk lamp, checkout shows tax $20.00 and total $110.00. Our policy is that every discount reduces the taxable amount, so the tax should be $18.00 and the total $108.00. A discount larger than the order must never make the taxable amount, the tax, or the total negative. Fix it and keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./internal/pricing/"]
+  ],
+  "hidden": {
+    "hidden/hidden_coupon_test.go": "internal/pricing/hidden_coupon_test.go"
+  },
+  "max_turns": 40
+}

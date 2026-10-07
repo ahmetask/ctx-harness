@@ -1,0 +1,1 @@
+`internal/payments/idempotency.go`, function `IdempotencyKey`: `orders.Service.Pay` charges with a key derived only from the order ID, so every retry reuses it and the provider deduplicates the charge.

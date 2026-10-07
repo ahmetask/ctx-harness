@@ -15,6 +15,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/setup-go@v5  # the benchmark demo repo is a Go module
+        with:
+          go-version: "1.22.x"
+          cache: false
       - run: python -m unittest discover -s tests -v
 
   plugin:
