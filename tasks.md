@@ -31,7 +31,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T14 | `ctxh init --target` instruction files for other agents | portability | P2 | done |
 | T15 | Configurable tool names for traces and the review gate | portability | P2 | done |
 | T16 | Tool-neutral agent/skill prompts with per-tool generators | portability | P3 | todo |
-| T17 | Hook adapters for other agents | portability | P3 | todo |
+| T17 | Hook adapters for other agents | portability | P3 | done |
 | T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | done |
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
 | T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | todo |
@@ -125,9 +125,8 @@ The read / edit / shell / subagent mapping is the adapter's `TOOLS`; the engine 
 - **Problem:** the scout, planner, reviewer, card-writer and skill prompts are written in Claude's frontmatter format.
 - **Done when:** prompt bodies live in one neutral place, and per-tool frontmatter or wrappers are generated (Claude first, then at least one other). Claude output is byte-identical or reviewed.
 
-### T17 · Hook adapters for other agents
-- **Problem:** automatic injection, freshness notices and the review gate only work in Claude Code.
-- **Done when:** at least one other agent with lifecycle hooks gets an adapter (`ctxh hook start|prompt|stop --tool <name>`), built against that tool's current docs, with tests using recorded payloads. Tools without a stop hook fall back to T19.
+### T17 · Hook adapters for other agents (done)
+Gemini CLI gets `adapters/gemini.py`: SessionStart, BeforeAgent and AfterAgent run `ctxh hook-start|hook-prompt|hook-stop --tool gemini`, with JSON replies and a session-log reader that replays patches and rewinds. Tested on payloads assembled from Gemini's hook reference and recorder source; not yet run against a live Gemini session. Tools without a stop hook use the T19 review record. See `.ctx/tasks/done/T17-gemini-hooks.md`.
 
 ### T18 · Tool label and vendor-neutral token counting (done)
 Metric records carry `tool`. `ctxh stats` groups by tool and label, and pairs harness and baseline runs only within a tool. `ctxh usage --gateway <requests.jsonl> --tool <agent>` imports per-session usage from an LLM gateway log, with either Anthropic or OpenAI field names. See `.ctx/tasks/done/T18-tool-label.md`.

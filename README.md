@@ -166,6 +166,25 @@ ctxh init --target agents-md,gemini   # several at once
 
 Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, plan to `.ctx/tasks/active.md` before touching 3+ files, and run `ctxh stale` at the end. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
 
+### Gemini CLI hooks
+
+Gemini CLI has lifecycle hooks too, so it gets the same automatic injection, metrics and gates through `adapters/gemini.py`: SessionStart runs `hook-start`, BeforeAgent runs `hook-prompt`, and AfterAgent runs `hook-stop`. Add this to `.gemini/settings.json` in the repo (or `~/.gemini/settings.json`), with the path to your checkout:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "name": "ctx-harness-start", "timeout": 10000,
+      "command": "python3 /path/to/ctx-harness/plugins/ctx-harness/bin/ctxh hook-start --tool gemini"}]}],
+    "BeforeAgent": [{"hooks": [{"type": "command", "name": "ctx-harness-prompt", "timeout": 10000,
+      "command": "python3 /path/to/ctx-harness/plugins/ctx-harness/bin/ctxh hook-prompt --tool gemini"}]}],
+    "AfterAgent": [{"hooks": [{"type": "command", "name": "ctx-harness-stop", "timeout": 30000,
+      "command": "python3 /path/to/ctx-harness/plugins/ctx-harness/bin/ctxh hook-stop --tool gemini"}]}]
+  }
+}
+```
+
+Gemini runs hooks with a cleaned environment, so the adapter is named with `--tool` rather than `CTXH_TOOL`. When a gate fires, the AfterAgent hook denies the reply and Gemini retries with the gate's reason as the next prompt, once per edit, as in Claude Code. The gates look for subagents whose names end in `planner` and `reviewer` (Gemini's `invoke_agent` calls), so define those in `.gemini/agents/` until the prompts ship for Gemini (T16); without them, the review gate falls back to the record below. Gemini has no start event after compression, so the resume note only appears on `/resume`. The adapter was built from Gemini CLI's hook reference and session-recorder source and is tested on payloads assembled from them, not yet on a live Gemini session.
+
 ## Review gate outside the agent (opt-in)
 
 The Stop-hook review gate only sees edits a Claude Code session makes with its edit tools. Edits from other agents, from humans, or from an agent writing files through the shell get past it. For those, opt in to a review record that commits and CI can check:

@@ -20,7 +20,7 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh review-record [paths]    record that the current content of changed code files was reviewed
   ctxh review-check [--staged | --base REF] [--install-hook]   fail on code changes with no review record
   ctxh version
-  ctxh hook-start | hook-prompt | hook-stop   agent hook entry points
+  ctxh hook-start | hook-prompt | hook-stop [--tool NAME]   agent hook entry points
 
 The engine is tool-neutral. What a coding agent hands its hooks, how a hook answers and what a
 session transcript looks like live in an adapter (adapters/<tool>.py, see adapters/README.md).
@@ -63,14 +63,22 @@ def load_adapter(name):
     path = PLUGIN_ROOT / "adapters" / f"{name}.py"
     if not re.fullmatch(r"[a-z0-9_]+", name or "") or not path.is_file():
         have = sorted(p.stem for p in (PLUGIN_ROOT / "adapters").glob("*.py"))
-        sys.exit(f"ctxh: no adapter '{name}' (CTXH_TOOL); available: {', '.join(have) or 'none'}")
+        sys.exit(f"ctxh: no adapter '{name}' (CTXH_TOOL or --tool); available: {', '.join(have) or 'none'}")
     spec = importlib.util.spec_from_file_location(f"ctxh_adapter_{name}", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-ADAPTER = load_adapter(env("TOOL", "claude"))
+def adapter_name():
+    """The hook commands take `--tool <name>` (agents that sanitize the hook environment); else CTXH_TOOL."""
+    a = sys.argv
+    if len(a) > 2 and a[1].startswith("hook-") and "--tool" in a[2:-1]:
+        return a[a.index("--tool", 2) + 1]
+    return env("TOOL", "claude")
+
+
+ADAPTER = load_adapter(adapter_name())
 
 
 def find_root() -> Path:
@@ -1666,7 +1674,7 @@ def refresh_in_background():
         subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "build-index", "--quiet", "--release-lock"],
                          cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True,
-                         env={**os.environ, **ADAPTER.child_env(ROOT)})
+                         env={**os.environ, "CTXH_TOOL": ADAPTER.NAME, **ADAPTER.child_env(ROOT)})
     except OSError:
         pass
 

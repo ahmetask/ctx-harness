@@ -1191,5 +1191,77 @@ class Adapters(unittest.TestCase):
             shutil.rmtree(plugin.parent, ignore_errors=True)
 
 
+GEMINI = Path(__file__).parent / "fixtures" / "gemini"
+
+
+class GeminiAdapter(unittest.TestCase):
+    """Gemini CLI hooks (SessionStart, BeforeAgent, AfterAgent) on recorded payloads and a session log."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+        self.chats = Path(tempfile.mkdtemp(prefix="ctxh-gemini-")) / "chats"
+        self.log = self.chats / "session-2026-10-07T10-00-5f1c2a90.jsonl"
+        sid = json.loads((GEMINI / "session.jsonl").read_text().splitlines()[0])["sessionId"]
+        self.fill("session.jsonl", self.log)
+        self.fill("subagent.jsonl", self.chats / sid / "sub-7a1.jsonl")
+
+    def tearDown(self):
+        self.repo.cleanup()
+        shutil.rmtree(self.chats.parent, ignore_errors=True)
+
+    def fill(self, name, dest=None):
+        text = (GEMINI / name).read_text().replace("{ROOT}", str(self.repo.root)).replace("{TRANSCRIPT}", str(self.log))
+        if dest:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text)
+        return text
+
+    def hook(self, cmd, payload):
+        """Run a hook the way the settings.json block in the README does: adapter on the command line,
+        root from GEMINI_PROJECT_DIR."""
+        return self.repo.ctxh(cmd, "--tool", "gemini", stdin=self.fill(payload),
+                              env={"GEMINI_PROJECT_DIR": str(self.repo.root)})
+
+    def test_start_and_prompt_hooks_answer_with_one_json_object(self):
+        start = json.loads(self.hook("hook-start", "session-start.json").stdout)
+        self.assertIn("Working protocol", start["hookSpecificOutput"]["additionalContext"])
+        prompt = json.loads(self.hook("hook-prompt", "before-agent.json").stdout)
+        self.assertIn("ctx-harness:reviewer", prompt["hookSpecificOutput"]["additionalContext"])
+
+    def test_stop_hook_measures_the_session_and_gates_unreviewed_edits(self):
+        stop = self.hook("hook-stop", "after-agent.json")
+        out = json.loads(stop.stdout)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("review gate", out["reason"])
+        sid = json.loads(self.fill("after-agent.json"))["session_id"]
+        m = json.loads((self.repo.root / ".ctx" / "metrics" / f"{sid}.json").read_text())
+        # 4 model turns in the main log (the rewound one was still paid for) and 1 in the subagent log;
+        # Gemini's input includes cached tokens and thoughts count as output.
+        self.assertEqual((m["tokens_total"], m["tool"]), (1300 + 1460 + 1540 + 1630 + 550, "gemini"))
+        self.assertEqual(m["tokens_main"]["cache_read_input_tokens"], 1000 + 1200 + 1400 + 1500)
+        t = json.loads((self.repo.root / ".ctx" / "traces" / f"{sid}.json").read_text())
+        self.assertEqual(t["files_edited"], ["app/orders/service.py", "notes.txt"])  # retry.py was rewound
+        self.assertEqual(t["ctx_queries"], ["ctxh q find OrderService"])
+        self.assertEqual(self.hook("hook-stop", "after-agent.json").stdout, "")  # blocks once per edit
+
+        with self.log.open("a") as f:
+            f.write(self.fill("review.jsonl"))
+        fresh = {**json.loads(self.fill("after-agent.json")), "session_id": "another-session"}
+        r = self.repo.ctxh("hook-stop", "--tool", "gemini", stdin=json.dumps(fresh),
+                           env={"GEMINI_PROJECT_DIR": str(self.repo.root)})
+        self.assertEqual(r.stdout, "")  # a new session would be blocked too, but the reviewer ran after the edit
+
+    def test_legacy_single_json_session_file(self):
+        msgs = [json.loads(l) for l in self.fill("session.jsonl").splitlines()]
+        legacy = {**msgs[0], "messages": [m for m in msgs[1:] if "id" in m and m["id"] != "g4"]}
+        self.log.write_text(json.dumps(legacy))
+        self.assertEqual(json.loads(self.hook("hook-stop", "after-agent.json").stdout)["decision"], "deny")
+        sid = msgs[0]["sessionId"]
+        m = json.loads((self.repo.root / ".ctx" / "metrics" / f"{sid}.json").read_text())
+        self.assertEqual(m["steps"], 4)
+
+
 if __name__ == "__main__":
     unittest.main()

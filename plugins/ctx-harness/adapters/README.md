@@ -5,6 +5,7 @@
 | Adapter | Agent |
 |---|---|
 | `claude.py` | Claude Code |
+| `gemini.py` | Gemini CLI (SessionStart, BeforeAgent and AfterAgent hooks; see the main README) |
 
 ## Interface
 
@@ -45,5 +46,5 @@ The gates key on `calls[].id` and look for subagent types ending in `planner` an
 ## Adding one
 
 1. Copy `claude.py` to `<tool>.py` and replace each piece from the agent's current hook and log documentation.
-2. Point the agent's hooks at `ctxh hook-start`, `hook-prompt` and `hook-stop` with `CTXH_TOOL=<tool>` in their environment.
+2. Point the agent's hooks at `ctxh hook-start`, `hook-prompt` and `hook-stop` with `--tool <tool>` (or `CTXH_TOOL=<tool>` in their environment).
 3. Add recorded payloads and a session log under `tests/fixtures/`, and a test like `Adapters.test_another_adapter_drives_hooks_metrics_and_gates` in `tests/test_ctxh.py`.
