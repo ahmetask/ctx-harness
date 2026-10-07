@@ -138,6 +138,16 @@ CTXH_TASK=t1 CTXH_DISABLED=1 claude -p "<task>"     # same task, harness off
 ctxh stats
 ```
 
+Every metric record carries the agent that produced it (`tool`, from the adapter). `ctxh stats` groups by tool and label, and pairs harness and baseline runs only within the same tool.
+
+**Agents without a readable transcript.** Count their tokens at an LLM proxy or gateway instead. Have the gateway tag each request with a session id, export its request log as JSONL (one request per line), and import it:
+
+```bash
+ctxh usage --gateway requests.jsonl --tool codex --label harness --task t1
+```
+
+Each line needs a session id (`session`, `session_id`, `metadata.session_id`, `metadata.session` or `trace_id`) and usage, either at the top level or under `usage`. Both naming styles are accepted: `input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, and `prompt_tokens`/`completion_tokens`/`prompt_tokens_details.cached_tokens` (cached tokens are subtracted from `prompt_tokens`, so nothing is counted twice). Lines without a session id are skipped. Gateway rows have no step count, so `stats` shows `-` for their steps.
+
 Sessions labeled `bootstrap` or `curate` count as overhead, and `stats` amortizes them into a break-even estimate. Run several tasks, a few times each; single runs are noisy.
 
 All of this is read out of Claude Code's transcript JSONL, so a format change could zero the numbers and switch the review gate off without anyone noticing. Checked-in fixtures in [tests/fixtures/transcripts](tests/fixtures/transcripts) pin the parse, and when a real transcript yields no `usage` or no tool name the engine knows, `ctxh usage` fails with the reason and the Stop hook warns once on stderr instead of recording a row of zeros.

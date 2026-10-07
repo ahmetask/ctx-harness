@@ -991,6 +991,46 @@ class SharedTraces(unittest.TestCase):
         self.assertTrue((self.repo.root / ".ctx/traces/x.json").exists())
 
 
+class ToolLabels(unittest.TestCase):
+    """Metrics carry the agent that produced them; gateway logs import usage for agents without transcripts."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_metrics_are_labeled_and_stats_group_by_tool(self):
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Read", {"file_path": "app/common/retry.py"})])
+        self.repo.ctxh("usage", str(tp), "--label", "harness", "--task", "t1")
+        self.assertEqual(json.loads((self.repo.root / ".ctx/metrics/t.json").read_text())["tool"], "claude")
+        log = self.repo.root / "gateway.jsonl"
+        log.write_text("\n".join(json.dumps(x) for x in [
+            {"metadata": {"session_id": "cx-1"}, "usage": {"prompt_tokens": 1000, "completion_tokens": 50,
+                                                           "prompt_tokens_details": {"cached_tokens": 800}}},
+            {"metadata": {"session_id": "cx-1"}, "usage": {"prompt_tokens": 1200, "completion_tokens": 70}},
+            {"session_id": "cx-2", "input_tokens": 300, "output_tokens": 30, "cache_read_input_tokens": 100},
+            {"usage": {"prompt_tokens": 5}},  # no session id: skipped
+            "not json",
+        ]))
+        out = self.repo.ctxh("usage", "--gateway", str(log), "--tool", "codex", "--label", "baseline",
+                             "--task", "t1").stdout
+        self.assertIn("codex baseline t1 cx-1: 2320 tokens total (1520 uncached), 2 requests", out)
+        m = json.loads((self.repo.root / ".ctx/metrics/cx-1.json").read_text())
+        self.assertEqual((m["tool"], m["source"], m["steps"]), ("codex", "gateway", None))
+        self.assertEqual(m["tokens_main"], {"input_tokens": 1400, "output_tokens": 120,
+                                            "cache_read_input_tokens": 800, "cache_creation_input_tokens": 0})
+        stats = self.repo.ctxh("stats").stdout
+        self.assertIn("codex     baseline       2", stats)
+        self.assertIn("claude    harness        1", stats)
+        self.assertNotIn("paired tasks", stats)  # claude/harness vs codex/baseline is not a pair
+        bad = self.repo.ctxh("usage", "--gateway", str(tp), "--tool", "codex", check=False)
+        self.assertIn("carries a session id", bad.stderr)
+
+
 class ReviewRecord(unittest.TestCase):
     """The opt-in review gate outside the agent: .ctx/reviews.json, review-check, the pre-commit hook."""
 

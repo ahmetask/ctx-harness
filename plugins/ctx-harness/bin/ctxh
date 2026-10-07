@@ -1403,11 +1403,12 @@ def sink_pull():
     return [t for t in items if isinstance(t, dict) and t.get("repo", rid) == rid]
 
 
-def record(session, data, label, task):
-    data.update(session=session, label=label, task=task, recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
-    write_json(METRICS / f"{session}.json", {k: data[k] for k in (
-        "session", "label", "task", "recorded_at", "tokens_total", "tokens_uncached", "tokens_main",
-        "tokens_sub", "steps", "subagents", "tool_version")})
+def record(session, data, label, task, tool=None):
+    data.update(session=session, label=label, task=task, recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                tool=tool or ADAPTER.NAME)
+    write_json(METRICS / f"{session}.json", {k: data.get(k) for k in (
+        "session", "tool", "label", "task", "recorded_at", "tokens_total", "tokens_uncached", "tokens_main",
+        "tokens_sub", "steps", "subagents", "tool_version", "source")})
     if label == "harness":
         trace = {k: data[k] for k in ("session", "task", "recorded_at", "files_read", "files_edited", "commands",
                                       "failed_commands", "ctx_queries", "ctx_misses", "subagents")}
@@ -1423,9 +1424,71 @@ def opt(args, name, default=None):
     return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
 
 
+GATEWAY_KEYS = {  # per-request usage as gateways and provider APIs name it -> ctxh's names
+    "input_tokens": ("input_tokens", "prompt_tokens"),
+    "output_tokens": ("output_tokens", "completion_tokens"),
+    "cache_read_input_tokens": ("cache_read_input_tokens", "cached_tokens", "prompt_tokens_details.cached_tokens"),
+    "cache_creation_input_tokens": ("cache_creation_input_tokens",),
+}
+GATEWAY_SESSION_KEYS = ("session", "session_id", "metadata.session_id", "metadata.session", "trace_id")
+
+
+def dig(obj, dotted):
+    for part in dotted.split("."):
+        obj = obj.get(part) if isinstance(obj, dict) else None
+    return obj
+
+
+def gateway_sessions(path: Path):
+    """Usage per session from an LLM gateway's request log (JSONL, one request per line)."""
+    sessions = defaultdict(lambda: {"tokens_main": Counter(), "requests": 0})
+    for line in path.read_text(errors="ignore").splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        usage = e.get("usage") if isinstance(e.get("usage"), dict) else e
+        sid = next((str(v) for k in GATEWAY_SESSION_KEYS if (v := dig(e, k))), None)
+        if not sid:
+            continue
+        s = sessions[sid]
+        s["requests"] += 1
+        got = {}
+        for name, aliases in GATEWAY_KEYS.items():
+            got[name] = next(((a, int(v)) for a in aliases if isinstance(v := dig(usage, a), (int, float))), (None, 0))
+        if got["input_tokens"][0] == "prompt_tokens":  # OpenAI style: cached tokens are part of prompt_tokens
+            got["input_tokens"] = (None, max(0, got["input_tokens"][1] - got["cache_read_input_tokens"][1]))
+        for name, (_, n) in got.items():
+            s["tokens_main"][name] += n
+    out = {}
+    for sid, s in sessions.items():
+        t = s["tokens_main"]
+        out[sid] = {"tokens_main": dict(t), "tokens_sub": {}, "steps": None, "subagents": {}, "tool_version": "",
+                    "requests": s["requests"], "source": "gateway",
+                    "tokens_total": sum(t.values()),
+                    "tokens_uncached": t["input_tokens"] + t["output_tokens"] + t["cache_creation_input_tokens"]}
+    return out
+
+
 def cmd_usage(args):
     if not args:
-        sys.exit("ctxh usage <transcript.jsonl> [--label baseline|harness] [--task T]")
+        sys.exit("ctxh usage <transcript.jsonl> [--label baseline|harness] [--task T]\n"
+                 "ctxh usage --gateway <requests.jsonl> --tool <agent> [--label L] [--task T]")
+    label, task = opt(args, "--label", "baseline"), opt(args, "--task", env("TASK"))
+    if "--gateway" in args:
+        log, tool = opt(args, "--gateway"), opt(args, "--tool")
+        if not log or not tool:
+            sys.exit("ctxh usage --gateway <requests.jsonl> --tool <agent> [--label L] [--task T]")
+        found = gateway_sessions(Path(log).expanduser())
+        if not found:
+            sys.exit(f"ctxh usage: no request in {log} carries a session id ({', '.join(GATEWAY_SESSION_KEYS)})")
+        for sid, data in sorted(found.items()):
+            record(sid, data, label, task, tool=tool)
+            print(f"{tool} {label} {task or ''} {sid}: {data['tokens_total']} tokens total "
+                  f"({data['tokens_uncached']} uncached), {data['requests']} requests")
+        return
     p = Path(args[0]).expanduser()
     data = parse_transcript(p)
     if data is None:
@@ -1435,7 +1498,6 @@ def cmd_usage(args):
         sys.exit(f"ctxh usage: {warning}")  # an explicit run fails loudly rather than recording zeros
     if warning:
         warn_once("transcript", warning)
-    label, task = opt(args, "--label", "baseline"), opt(args, "--task", env("TASK"))
     record(p.stem, data, label, task)
     print(f"{label} {task or ''}: {data['tokens_total']} tokens total "
           f"({data['tokens_uncached']} uncached), {data['steps']} tool calls, {len(data['files_read'])} files read")
@@ -1449,30 +1511,34 @@ def cmd_stats(_):
         return
 
     def med(xs):
-        xs = sorted(xs)
-        return xs[len(xs) // 2] if xs else 0
+        xs = sorted(x for x in xs if x is not None)  # gateway rows have no step count
+        return xs[len(xs) // 2] if xs else "-"
 
+    for r in rows:
+        r.setdefault("tool", "claude")  # records from before tools were labeled all came from Claude Code
     overhead = [r for r in rows if r.get("task") in OVERHEAD_TASKS]
     work = [r for r in rows if r.get("task") not in OVERHEAD_TASKS]
     by = defaultdict(list)
     for r in work:
-        by[r["label"]].append(r)
-    print(f"{'label':<10}{'runs':>6}{'median tokens':>16}{'median uncached':>18}{'median steps':>14}")
-    for label, rs in sorted(by.items()):
-        print(f"{label:<10}{len(rs):>6}{med([r['tokens_total'] for r in rs]):>16}"
-              f"{med([r['tokens_uncached'] for r in rs]):>18}{med([r['steps'] for r in rs]):>14}")
+        by[(r["tool"], r["label"])].append(r)
+    print(f"{'tool':<10}{'label':<10}{'runs':>6}{'median tokens':>16}{'median uncached':>18}{'median steps':>14}")
+    for (tool, label), rs in sorted(by.items()):
+        print(f"{tool:<10}{label:<10}{len(rs):>6}{med([r['tokens_total'] for r in rs]):>16}"
+              f"{med([r['tokens_uncached'] for r in rs]):>18}{med([r.get('steps') for r in rs]):>14}")
     tasks = defaultdict(dict)
     for r in work:
-        if r.get("task"):
-            tasks[r["task"]].setdefault(r["label"], []).append(r["tokens_total"])
+        if r.get("task"):  # harness and baseline are only compared within one tool
+            tasks[(r["tool"], r["task"])].setdefault(r["label"], []).append(r["tokens_total"])
     paired = {t: v for t, v in tasks.items() if "harness" in v and "baseline" in v}
     saved = 0
     if paired:
         print("\npaired tasks, median total tokens (harness vs baseline):")
-        for t, v in sorted(paired.items()):
+        multi = len({tool for tool, _ in paired}) > 1
+        for (tool, t), v in sorted(paired.items()):
             h, b = med(v["harness"]), med(v["baseline"])
             saved += b - h
-            print(f"  {t}: {h} vs {b}  ({(h - b) / b * 100:+.0f}%)" if b else f"  {t}: {h} vs {b}")
+            name = f"{tool}/{t}" if multi else t
+            print(f"  {name}: {h} vs {b}  ({(h - b) / b * 100:+.0f}%)" if b else f"  {name}: {h} vs {b}")
     if overhead:
         cost = sum(r["tokens_total"] for r in overhead)
         print(f"\nharness overhead so far (bootstrap + curation): {cost} tokens")

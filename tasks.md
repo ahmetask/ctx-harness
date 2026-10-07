@@ -32,7 +32,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T15 | Configurable tool names for traces and the review gate | portability | P2 | done |
 | T16 | Tool-neutral agent/skill prompts with per-tool generators | portability | P3 | todo |
 | T17 | Hook adapters for other agents | portability | P3 | todo |
-| T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | todo |
+| T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | done |
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
 | T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | todo |
 | T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
@@ -129,6 +129,5 @@ The read / edit / shell / subagent mapping is the adapter's `TOOLS`; the engine 
 - **Problem:** automatic injection, freshness notices and the review gate only work in Claude Code.
 - **Done when:** at least one other agent with lifecycle hooks gets an adapter (`ctxh hook start|prompt|stop --tool <name>`), built against that tool's current docs, with tests using recorded payloads. Tools without a stop hook fall back to T19.
 
-### T18 · Tool label and vendor-neutral token counting
-- **Problem:** metrics don't record which agent produced them, and other tools' token usage may not be readable from their logs.
-- **Done when:** every metric record carries `tool`, and `ctxh stats` groups by it. A documented option counts tokens at an LLM proxy or gateway and imports them with `ctxh usage`.
+### T18 · Tool label and vendor-neutral token counting (done)
+Metric records carry `tool`. `ctxh stats` groups by tool and label, and pairs harness and baseline runs only within a tool. `ctxh usage --gateway <requests.jsonl> --tool <agent>` imports per-session usage from an LLM gateway log, with either Anthropic or OpenAI field names. See `.ctx/tasks/done/T18-tool-label.md`.
