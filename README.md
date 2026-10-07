@@ -66,7 +66,7 @@ Step-by-step sequence diagrams are in [docs/flow.md](docs/flow.md).
 
 **Hooks** (they run automatically, and only in repos that have `.ctx/`):
 
-- **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index.
+- **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index. It runs again after the conversation is compacted (and on `--resume`). When a plan is active, the injection then names the plan and repeats the last 8 entries of its progress log, so the agent picks up where it left off instead of re-planning.
 - **UserPromptSubmit:** a one-line reminder of the two rules agents skip most often: plan for 3+ files, and review before finishing.
 - **Stop:** records tokens, steps, files read and edited, failed commands and empty index queries. If code changed since the last reviewer run, it blocks finishing once and asks for a review. It blocks only once per edit, so it can't loop.
 

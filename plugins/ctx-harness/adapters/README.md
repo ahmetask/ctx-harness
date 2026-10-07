@@ -16,7 +16,7 @@ An adapter is a stdlib-only Python module that imports nothing from the engine. 
 | `TOOLS` | Tool names by role: `read`, `edit`, `shell`, `subagent`. Calls with a name outside these count as unknown, and a session where none is known triggers the drift warning |
 | `project_dir()` | The repo root the agent hands its hooks, or `None` to let the engine search for `.ctx/` and `.git` |
 | `child_env(root)` | Environment additions so the detached background re-index resolves the same root |
-| `read_event(stream)` | A hook's stdin payload, as `{"session": id or None, "transcript": Path or None}`; `None` if unreadable |
+| `read_event(stream)` | A hook's stdin payload, as `{"session": id or None, "transcript": Path or None, "source": str or None}`; `None` if unreadable. `source` says why a session (re)started: `startup`, `resume`, `clear` or `compact` |
 | `emit_context(text)` | How a start or prompt hook adds text to the model's context |
 | `emit_block(reason)` | How the Stop hook refuses to finish and hands the agent the reason |
 | `read_session(path)` | A session log as the normalized trace below, or `None` if there is no log at `path` |

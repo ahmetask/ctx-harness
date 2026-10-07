@@ -22,7 +22,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | done |
 | T06 | Transcript parser fixtures and version guard | measurement | P1 | done |
 | T07 | Benchmark platform with a demo repo | measurement | P1 | done |
-| T08 | Mid-session context management (compaction) | context | P2 | todo |
+| T08 | Mid-session context management (compaction) | context | P2 | done |
 | T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | done |
 | T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | todo |
 | T11 | Optional tree-sitter parsing | retrieval | P3 | todo |
@@ -79,9 +79,8 @@ Fixtures in `tests/fixtures/transcripts/` (a session with a subagent, a reviewed
 
 ## Context management and enforcement
 
-### T08 · Mid-session context management
-- **Problem:** the harness controls what loads at session start and what gets pulled on demand, but does nothing when a long task fills the context window. After compaction the protocol, map and plan progress may be summarized away.
-- **Done when:** a `PreCompact` (or equivalent) hook re-injects the protocol pointer, the active plan path and its progress-log tail after compaction, so a compacted session resumes from `.ctx/tasks/active.md`. Tests cover the hook output.
+### T08 · Mid-session context management (done)
+Compaction fires `SessionStart` with source `compact`, which already re-ran `hook-start` (protocol and map). With an active plan, `hook-start` now adds the plan's title, path and the last 8 progress-log entries on `compact` and `resume`. This was checked live with `/compact` in the sandbox, and tests cover it. See `.ctx/tasks/done/T08-compaction.md`.
 
 ### T09 · Hook-enforced plan gate (done)
 The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ctx/tasks/active.md`, or a planner call in the session), before the review gate; both share `gate_once` and `.ctx/tmp/gates/<session>.json`. `CTXH_PLAN_GATE=0` turns it off. See `.ctx/tasks/done/T09-plan-gate.md`.

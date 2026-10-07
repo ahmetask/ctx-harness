@@ -225,6 +225,25 @@ class CardsAndHooks(unittest.TestCase):
         (self.repo.root / ".ctx" / "protocol.md").write_text("# Team protocol\n")
         self.assertIn("# Team protocol", self.repo.ctxh("hook-start", stdin="{}").stdout)
 
+    def test_compaction_resumes_from_the_active_plan(self):
+        start = lambda source: self.repo.ctxh("hook-start", stdin=json.dumps({"source": source})).stdout
+        self.assertEqual(start("compact"), start("startup"))  # no plan: compaction re-injects the same context
+        log = "\n".join(f"- step {i} done" for i in range(1, 11))
+        (self.repo.root / ".ctx" / "tasks").mkdir(parents=True, exist_ok=True)
+        (self.repo.root / ".ctx" / "tasks" / "active.md").write_text(
+            f"# T99 · Retry payments\n\n## Goal\nRetry.\n\n## Progress log\n{log}\n")
+        out = start("compact")
+        self.assertIn("# Working protocol (context harness)", out)
+        self.assertIn("# Repo map", out)
+        self.assertIn("Context was compacted mid-task. You are working on the plan in .ctx/tasks/active.md "
+                      "(T99 · Retry payments)", out)
+        self.assertIn("Last 8 progress entries:\n- step 3 done\n", out)
+        self.assertIn("- step 10 done", out)
+        self.assertNotIn("- step 2 done", out)
+        self.assertIn("This session resumed mid-task", start("resume"))
+        self.assertIn("Active plan exists: .ctx/tasks/active.md (read it first).", start("startup"))
+        self.assertNotIn("progress entries", start("startup"))
+
     def test_disabled_injects_nothing(self):
         out = self.repo.ctxh("hook-start", stdin="{}", env={"CTXH_DISABLED": "1"}).stdout
         self.assertEqual(out, "")
