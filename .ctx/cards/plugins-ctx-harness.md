@@ -2,8 +2,8 @@
 module: plugins/ctx-harness
 updated: 2026-10-07
 anchors:
-  plugins/ctx-harness/bin/ctxh: fffa425f547e
-  plugins/ctx-harness/protocol.md: f1a70dd90a28
+  plugins/ctx-harness/bin/ctxh: b510c01db10a
+  plugins/ctx-harness/protocol.md: 8e2baef17de5
   plugins/ctx-harness/hooks/hooks.json: 4291e4081215
   plugins/ctx-harness/adapters/claude.py: 027255c366c1
 ---
@@ -23,6 +23,7 @@ Invariants in code:
 - `ctxh init --target` (`INIT_TARGETS`, `INIT_BLOCK`) writes a tool-neutral protocol between `<!-- ctx-harness:begin -->`/`end` markers via `upsert_block`; only the block is ever replaced, and an unchanged block means no write.
 - `hook-start` also runs after compaction and on resume (event `source` `compact`/`resume`); with a non-empty active plan it adds `plan_resume_note` (title + last `PLAN_TAIL` (8) `## Progress log` entries) instead of the one-line pointer.
 - Opt-in review record: .ctx/reviews.json (`REVIEWS`, committed; path -> git blob id). `review-check` compares changed code files (`--staged`: index blobs, `--base`: HEAD blobs, default: `git hash-object`), and the Stop hook calls `record_reviews` only when that file exists and a reviewer ran after the last edit.
+- `q search` / `q find` fallback: `keyword_search` builds units at query time (no index change): symbol name x3 + comment block above + comments/docstring in the next 8 lines, loose 3+ line comment blocks, markdown sections; BM25 times query-term coverage. Trace misses also match `no keyword`.
 - A repo-level .ctx/protocol.md overrides the plugin `protocol.md` in `cmd_hook_start`.
 - Metrics/traces keep the newest `KEEP_RECORDS` (300) files; traces are written only for `harness` runs.
 - `ctxh check` limits: map 60 lines / 4000 bytes, card body 45 lines, learned 40 lines; flags `IMPERATIVE` phrasing and unfilled LLM placeholders from the skeleton.

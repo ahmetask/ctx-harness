@@ -24,7 +24,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T07 | Benchmark platform with a demo repo | measurement | P1 | done |
 | T08 | Mid-session context management (compaction) | context | P2 | done |
 | T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | done |
-| T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | todo |
+| T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | done |
 | T11 | Optional tree-sitter parsing | retrieval | P3 | todo |
 | T12 | Shared trace store for team-wide curation | learning | P3 | todo |
 | T13 | Split `ctxh` into tool-neutral core + Claude adapter | portability | P2 | done |
@@ -93,7 +93,8 @@ Opt-in `.ctx/reviews.json` (code path -> reviewed blob id), `ctxh review-record`
 
 ## Retrieval
 
-### T10 · Semantic or keyword retrieval fallback
+### T10 · Semantic or keyword retrieval fallback (done)
+`ctxh q search <words>` (BM25 over split names, nearby comments, docstrings and doc sections), and `q find` falls back to it for concepts. `ctxh signals` prints the empty-result rate. On 13 concept queries in the shopd sandbox, empty answers went from 11/13 to 0/13, with a useful file in the top 3 for about 9. See `.ctx/tasks/done/T10-keyword-search.md`.
 - **Problem:** `ctxh q` is structural (imports, symbols, history). Questions phrased in domain terms ("where is the retry policy?") come back empty when names don't match, and the scout falls back to grep.
 - **Done when:** a zero-dependency fallback, for example `ctxh q search <terms>` using BM25 over symbols, docstrings and comments, answers concept queries with `file:line`. Empty-result rates in `ctxh signals` are compared before and after.
 

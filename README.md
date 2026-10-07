@@ -93,6 +93,7 @@ Commit `.ctx/`; its own `.gitignore` keeps the derived and per-machine files out
 ```bash
 ctxh q hot                       # most central files (PageRank over imports)
 ctxh q find OrderService         # symbol -> file:line
+ctxh q search double charge      # concept -> file:line, ranked by names, comments and docstrings (BM25)
 ctxh q impact app/payments/client.py
 ctxh q cochange client.py        # files that change with it in git history
 ctxh q risk client.py            # fix/revert commits touching it
@@ -102,6 +103,8 @@ ctxh check                       # budgets, dead paths, unstamped anchors, instr
 ctxh stats                       # harness vs baseline token medians and break-even
 ctxh add-command test "<cmd>" [--replaces "<detected cmd>"]   # keep a fixed or added command
 ```
+
+`q search` is a keyword fallback for questions phrased in domain terms. It ranks every symbol by its split name plus the comments above it and the docstring or comments at the top of its body, as well as loose comment blocks and markdown sections. When `q find` has no symbol by that name, it answers with the same ranking instead of nothing.
 
 Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). A directory holding a package manifest (`package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, a plugin's `.claude-plugin/plugin.json` and so on) is a module; elsewhere modules are top-level folders, one level deeper under `src/`, `internal/`, `packages/` and similar. Markdown files are indexed as docs: `q find` matches their headings and `q cochange` pairs them with the code they change with, but they never count as code for the gates, `q hot` or staleness. `build-index` and `ctxh check` flag a card whose `module:` is not in the index.
 

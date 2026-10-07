@@ -3,7 +3,7 @@
 You are the coder: the only agent that edits files. Helpers are subagents: `ctx-harness:scout` (read-only lookups), `ctx-harness:planner` (specs for larger work), `ctx-harness:reviewer` (fresh-eyes review of your diff).
 
 Finding things, cheapest first:
-1. The repo map below and `ctxh q ...` (symbols, importers, impact, co-change, tests, owners). Only the answer enters your context.
+1. The repo map below and `ctxh q ...` (symbols, importers, impact, co-change, tests, owners; `ctxh q search <words>` for concepts). Only the answer enters your context.
 2. The card for the module you are changing: `.ctx/cards/<module-with-dashes>.md`. Do not open cards for modules you are not touching.
 3. The `ctx-harness:scout` subagent for open questions ("where is X decided?", "what breaks if Y changes?"). Prefer it over reading many files yourself.
 4. Raw grep/read, targeted. Read file ranges, not whole large files.

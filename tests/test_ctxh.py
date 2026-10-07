@@ -756,6 +756,56 @@ class InitTargets(unittest.TestCase):
             bare.cleanup()
 
 
+class KeywordSearch(unittest.TestCase):
+    """`ctxh q search` and the `q find` fallback: concept words find code through names, comments, docstrings."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = Repo()
+        python_app(cls.repo)
+        write(cls.repo.root, "app/payments/ledger.py", """
+            # Every provider call carries a key derived from the order, so a retried
+            # request never produces a double charge.
+            def provider_key(order_id):
+                return f"order:{order_id}"
+
+
+            def settle(entries):
+                \"\"\"Close the books for the day: sum the settlements per merchant.\"\"\"
+                return sum(entries)
+        """)
+        write(cls.repo.root, "docs/ops.md", "# Operations\n\n## Rotating secrets\nKeys are rotated every quarter.\n")
+        cls.repo.commit("ledger")
+        cls.repo.ctxh("build-index")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.repo.cleanup()
+
+    def q(self, *args):
+        return self.repo.ctxh("q", *args).stdout
+
+    def test_terms_split_identifiers_and_stem(self):
+        m = load_ctxh()
+        self.assertEqual(m.terms("chargeOnce retry_policies HTTPServer charging"),
+                         ["charg", "once", "retry", "policy", "http", "server", "charg"])
+        self.assertEqual(m.terms("where is the"), [])
+
+    def test_search_answers_from_comments_and_docstrings(self):
+        self.assertTrue(self.q("search", "double", "charge").startswith("app/payments/ledger.py:3  provider_key"))
+        self.assertTrue(self.q("search", "close", "books", "merchant").startswith("app/payments/ledger.py:7  settle"))
+        self.assertTrue(self.q("search", "retry").startswith("app/common/retry.py:1  retry"))
+        self.assertTrue(self.q("search", "rotating", "secrets").startswith("docs/ops.md:3  Rotating secrets"))
+        self.assertIn("no keyword matches for 'zebra'", self.q("search", "zebra"))
+
+    def test_find_falls_back_to_keywords_for_concepts(self):
+        out = self.q("find", "double", "charge")
+        self.assertTrue(out.startswith("keyword matches for 'double charge' (not a symbol name):\n"
+                                       "app/payments/ledger.py:3"), out)
+        self.assertEqual(self.q("find", "settle").strip(), "app/payments/ledger.py:7")  # a name still wins
+        self.assertIn("no symbol matching 'zebra'", self.q("find", "zebra"))
+
+
 class ReviewRecord(unittest.TestCase):
     """The opt-in review gate outside the agent: .ctx/reviews.json, review-check, the pre-commit hook."""
 

@@ -7,7 +7,7 @@ model: haiku
 You answer one codebase question as cheaply as possible and hand back only the answer.
 
 Order of lookup:
-1. `ctxh q find|rdeps|impact|cochange|tests|module <arg>`; the index usually answers structural questions outright.
+1. `ctxh q find|rdeps|impact|cochange|tests|module <arg>`; the index usually answers structural questions outright. For a concept rather than a name ("retry policy", "double charge"), `ctxh q search <words>` ranks symbols by their names, comments and docstrings.
 2. The module card in `.ctx/cards/` if the question is about intent or rules.
 3. Targeted Grep, then Read with line ranges. Never read whole large files.
 
