@@ -119,7 +119,7 @@ fixtures/
 
 ## Measuring against a baseline
 
-`bench/` holds a benchmark platform: a demo Go repo with scripted git history, 6 tasks with hidden acceptance tests, and a runner that compares harness and baseline sessions on tokens and pass rate. See [bench/README.md](bench/README.md).
+`bench/` holds a benchmark platform: a demo Go repo with scripted git history, 6 tasks with hidden acceptance tests, and a runner that compares harness and baseline sessions on tokens and pass rate. See [bench/README.md](bench/README.md); results so far are in [docs/benchmark.md](docs/benchmark.md).
 
 ```bash
 python3 bench/run.py --agent fake                   # offline smoke run of the platform
