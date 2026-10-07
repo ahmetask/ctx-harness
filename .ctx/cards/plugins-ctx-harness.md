@@ -2,7 +2,7 @@
 module: plugins/ctx-harness
 updated: 2026-10-07
 anchors:
-  plugins/ctx-harness/bin/ctxh: 3b52791e9dea
+  plugins/ctx-harness/bin/ctxh: 0d25050df7de
   plugins/ctx-harness/protocol.md: f1a70dd90a28
   plugins/ctx-harness/hooks/hooks.json: 4291e4081215
   plugins/ctx-harness/adapters/claude.py: a3b6cba2998f
@@ -15,6 +15,8 @@ Invariants in code:
 - A repo is opted in only if `.ctx/` exists (`opted_in`); every hook is a no-op otherwise, so hooks never create files.
 - Env vars are read through `env()`: `CTXH_*` first, legacy `CTX_*` accepted.
 - `build-index` rewrites `commands.json` from `detect_commands`, keeps earlier `verified` results, and carries `source: manual` commands (from `add-command`) across re-index; `replaces` drops the detected command a manual one fixes.
+- Modules: `module_of(path, package_roots(files))`, the deepest dir holding a `PACKAGE_MANIFESTS` file, then the `CONTAINERS` rule below it; roots are saved as `package_roots` in graph.json. `card_module_problems` (build-index warning, `check` failure) flags a card whose `module:` is not a graph module.
+- Markdown (`DOC_LANGS`) is indexed as `role: docs` with headings as symbols (fenced blocks skipped); it is not in `lang_of`, so it never counts for gates, `index_lag`, PageRank or card staleness.
 - Indexing and `index_lag` use `lang_of`: a suffix in `LANGS`, else a known shebang on an extensionless file (so `ctxh` itself is indexed). `.ctxignore` and `SKIP_DIRS` exclude paths from both indexing and command detection.
 - Background re-index is guarded by .ctx/tmp/index.lock, treated as held for 600s.
 - Gates (`cmd_hook_stop`, both from one `session_edits` pass, both via `gate_once` keyed on the last code-edit tool_use id in .ctx/tmp/gates/<session>.json, so neither can loop): the plan gate runs first and blocks when `PLAN_GATE_FILES` (3) distinct code files changed with no non-empty plan at .ctx/tasks/active.md and no `planner` call; then the review gate, where a review is any subagent whose `subagent_type` ends in `reviewer`. Edits under `.ctx/` or to files `lang_of` does not recognize count for neither. `CTXH_DISABLED=1` skips both.

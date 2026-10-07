@@ -18,7 +18,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T01 | Index extensionless scripts by shebang | dogfooding | P1 | done |
 | T02 | Promote CI `run:` test commands to candidates | dogfooding | P1 | done |
 | T03 | Keep hand-verified commands across re-index | dogfooding | P1 | done |
-| T04 | Module grouping and markdown-only modules | dogfooding | P2 | todo |
+| T04 | Module grouping and markdown-only modules | dogfooding | P2 | done |
 | T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | todo |
 | T06 | Transcript parser fixtures and version guard | measurement | P1 | done |
 | T07 | Benchmark platform with a demo repo | measurement | P1 | done |
@@ -55,9 +55,8 @@ Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before ch
 - **Problem:** `build-index` rebuilds `commands.json` from detection and keeps earlier verification results only for commands it detects again. The build skill tells agents to fix a failing invocation, but any fixed or added command disappears on the next (background) re-index.
 - **Done when:** a command added or fixed by an agent (for example marked `source: manual`) survives re-index and is re-verified with `--verify`. `ctxh skeleton` lists it. A test covers it.
 
-### T04 · Module grouping and markdown-only modules
-- **Problem:** `module_of` groups by the first path segment unless it is in `CONTAINERS`. So `plugins/ctx-harness/...` becomes module `plugins`, and a card for `plugins/ctx-harness` never matches a graph module, which means "new files" staleness can't fire. The plugin's real logic (agents, skills, protocol) is markdown, and the index doesn't model it.
-- **Done when:** modules group at a meaningful depth (for example the dir holding a manifest, or `plugins/<name>`), and `build-index` warns when a card's `module:` matches no graph module. Decide (in the plan) whether markdown prompt files get indexed as a "docs/prompts" role for `q find` and `cochange`.
+### T04 · Module grouping and markdown-only modules (done)
+A directory holding a package manifest (including a plugin's `.claude-plugin/plugin.json`) is a module, so this repo's card for `plugins/ctx-harness` now matches. Markdown is indexed as `role: docs` (headings as symbols, in co-change, outside the gates, `q hot` and staleness). `build-index` warns and `ctxh check` fails on a card whose module is not in the index. See `.ctx/tasks/done/T04-module-grouping.md`.
 
 ### T21 · Exclude fixture dirs from indexing
 - **Problem:** `list_files` indexes everything git tracks outside `SKIP_DIRS`. Since `bench/demo/template/` landed, the demo's 43 Go files dominate this repo's own index: `ctxh q hot` lists only demo files, `q find IdempotencyKey` answers from the fixture, and the nested `go.mod` adds `cd bench/demo/template && go ...` as this repo's commands. Any repo with fixtures, vendored samples or test data has the same problem.

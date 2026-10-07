@@ -103,7 +103,7 @@ ctxh stats                       # harness vs baseline token medians and break-e
 ctxh add-command test "<cmd>" [--replaces "<detected cmd>"]   # keep a fixed or added command
 ```
 
-Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). Modules are grouped by folder.
+Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). A directory holding a package manifest (`package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, a plugin's `.claude-plugin/plugin.json` and so on) is a module; elsewhere modules are top-level folders, one level deeper under `src/`, `internal/`, `packages/` and similar. Markdown files are indexed as docs: `q find` matches their headings and `q cochange` pairs them with the code they change with, but they never count as code for the gates, `q hot` or staleness. `build-index` and `ctxh check` flag a card whose `module:` is not in the index.
 
 **What gets indexed.** Every file git tracks, except dependency and build folders, `testdata/`, and paths matched by a `.ctxignore` at the repo root. It uses gitignore syntax and keeps fixtures, vendored samples and test data out of the index and command detection:
 

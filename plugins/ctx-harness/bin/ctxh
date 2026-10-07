@@ -114,6 +114,12 @@ MANIFESTS = {"package.json", "pyproject.toml", "setup.py", "setup.cfg", "require
              "pom.xml", "build.gradle", "build.gradle.kts", "Cargo.toml", "Gemfile", "composer.json",
              "Makefile", "Dockerfile", "docker-compose.yml", "docker-compose.yaml", "Chart.yaml",
              ".gitlab-ci.yml", "Jenkinsfile", "tsconfig.json"}
+# A directory holding one of these is a package, and so a module (build and CI files are not).
+PACKAGE_MANIFESTS = {"package.json", "pyproject.toml", "setup.py", "setup.cfg", "go.mod", "pom.xml", "build.gradle",
+                     "build.gradle.kts", "Cargo.toml", "Gemfile", "composer.json", "Chart.yaml",
+                     ".claude-plugin/plugin.json"}
+DOC_LANGS = {".md": "markdown", ".mdx": "markdown"}  # indexed as role "docs": headings, no imports, no gates
+HEADING_RX = re.compile(r"^#{1,6}[ \t]+(.+?)[ \t#]*$", re.M)
 ENTRY_NAMES = {"main.py", "__main__.py", "app.py", "main.go", "index.js", "index.ts", "server.js",
                "server.ts", "Main.java", "Application.java", "main.rs"}
 RISKY = re.compile(r"\b(revert|hotfix|fix|bug|incident|rollback|regression|outage)\b", re.I)
@@ -205,13 +211,31 @@ def resolve_arg(g, arg):
     sys.exit("ambiguous, pick one:\n  " + "\n  ".join(sorted(hits)[:10]))
 
 
-def module_of(path: str) -> str:
-    parts = path.split("/")
+def package_roots(files):
+    """Directories below the repo root that hold a package manifest, deepest first."""
+    roots = set()
+    for f in files:
+        for m in PACKAGE_MANIFESTS:
+            if f.endswith("/" + m):
+                roots.add(f[:-len(m) - 1])
+    return sorted(roots, key=lambda r: (-r.count("/"), r))
+
+
+def module_of(path: str, roots=()) -> str:
+    """The deepest package root holding the file, then one level more below a container dir like src/.
+
+    Outside any package root the repo root acts as one: its first folder, or two under a container."""
+    base = next((r for r in roots if path.startswith(r + "/")), "")
+    parts = path[len(base) + 1 if base else 0:].split("/")
     if len(parts) == 1:
-        return "(root)"
+        return base or "(root)"
     if parts[0] in CONTAINERS and len(parts) > 2:
-        return "/".join(parts[:2])
-    return parts[0]
+        sub = "/".join(parts[:2])
+    elif base:
+        return base
+    else:
+        sub = parts[0]
+    return f"{base}/{sub}" if base else sub
 
 
 def role_of(path: str, head: str) -> str:
@@ -580,6 +604,7 @@ def cmd_build_index(args):
         m = re.search(r"^module\s+(\S+)", (ROOT / gm).read_text(errors="ignore"), re.M)
         if m:
             go_module[m.group(1)] = gm[:-len("go.mod")]
+    roots = package_roots(files)
     lang_by_file = {f: lang for f in files if (lang := lang_of(f))}
     stem_index = defaultdict(list)
     for f in lang_by_file:
@@ -594,11 +619,19 @@ def cmd_build_index(args):
             if f.count("/") <= 3:
                 manifests.append(f)
         lang = lang_by_file.get(f)
-        if not lang:
+        doc = None if lang else DOC_LANGS.get(Path(f).suffix.lower())
+        if not lang and not doc:
             continue
         try:
             text = (ROOT / f).read_text(errors="ignore")
         except OSError:
+            continue
+        if doc:  # prompts and docs: findable by heading and part of co-change, never code
+            body = re.sub(r"^(```|~~~).*?^\1", lambda m: "\n" * m.group(0).count("\n"), text,
+                          flags=re.M | re.S)  # "# comment" in a fence is no heading; keep line numbers
+            heads = [[m.group(1), body.count("\n", 0, m.start()) + 1] for m in HEADING_RX.finditer(body)]
+            nodes[f] = {"lang": doc, "role": "docs", "module": module_of(f, roots), "lines": text.count("\n") + 1,
+                        "sha": hashlib.sha1(text.encode()).hexdigest()[:12], "imports": [], "symbols": heads[:200]}
             continue
         role = role_of(f, text[:400])
         langs[lang] += 1
@@ -617,7 +650,7 @@ def cmd_build_index(args):
         if rx:
             for m in rx.finditer(text):
                 symbols.append([m.group(m.lastindex), text.count("\n", 0, m.start()) + 1])
-        nodes[f] = {"lang": lang, "role": role, "module": module_of(f), "lines": text.count("\n") + 1,
+        nodes[f] = {"lang": lang, "role": role, "module": module_of(f, roots), "lines": text.count("\n") + 1,
                     "sha": hashlib.sha1(text.encode()).hexdigest()[:12], "imports": imports,
                     "symbols": symbols[:200]}
 
@@ -657,7 +690,7 @@ def cmd_build_index(args):
                 verify_command(c)
     _, head, _ = sh(["git", "rev-parse", "--short", "HEAD"])
     graph = {"version": 1, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "head": head.strip(),
-             "commits_mined": commits,
+             "commits_mined": commits, "package_roots": roots,
              "stack": {"languages": dict(langs.most_common()), "manifests": sorted(manifests),
                        "entrypoints": sorted(entry)},
              "files": nodes, "modules": mods}
@@ -670,9 +703,12 @@ def cmd_build_index(args):
     if "--quiet" in args:
         return
     ver = [c for c in commands if c.get("verified")]
-    print(f"indexed {len(nodes)} code files in {len(mods)} modules, {len(edges)} internal imports, "
+    docs = sum(1 for n in nodes.values() if n["role"] == "docs")
+    print(f"indexed {len(nodes) - docs} code files and {docs} docs in {len(mods)} modules, {len(edges)} internal imports, "
           f"{commits} commits mined, {len(commands)} commands ({len(ver)} verified) "
           f"in {time.time() - t0:.1f}s -> .ctx/graph.json, .ctx/commands.json")
+    for problem in card_module_problems(graph):
+        print(f"warning: {problem}")
 
 
 # ---------------------------------------------------------------- skeleton
@@ -753,7 +789,7 @@ def cmd_q(args):
         print("\n".join(hits[:12]) if hits else f"no symbol matching '{arg}' (try grep)")
         return
     if q == "module":
-        m = module_of(arg) if arg not in g["modules"] else arg
+        m = module_of(arg, g.get("package_roots", [])) if arg not in g["modules"] else arg
         if m not in g["modules"]:
             m = files[resolve_arg(g, arg)]["module"]
         info = g["modules"][m]
@@ -846,6 +882,18 @@ def cmd_anchor(args):
     print(f"anchored {card.name} to {len(anchors)} files" + (f"; dropped missing: {missing}" if missing else ""))
 
 
+def card_module_problems(g):
+    """Cards whose `module:` names no module in the index: their "new files" staleness can never fire."""
+    out = []
+    for card in sorted(CARDS.glob("*.md")) if CARDS.exists() and g else []:
+        mod = parse_card(card.read_text())[0].get("module")
+        if mod and mod not in g["modules"]:
+            near = sorted(m for m in g["modules"] if m.startswith(mod + "/") or mod.startswith(m + "/"))
+            out.append(f"{card.name}: module '{mod}' is not in the index"
+                       + (f" (nearest: {', '.join(near[:3])})" if near else "; see `ctxh q module <file>`"))
+    return out
+
+
 def index_lag(g):
     """Code files committed since the index was built (None if unknown)."""
     if not g or not g.get("head"):
@@ -922,6 +970,8 @@ def cmd_check(_):
             problems.append(f"{card.name}: anchors not stamped (run ctxh anchor {card.relative_to(ROOT)})")
         dead_paths(card.name, body)
         phrasing(card.name, body)
+    g = load_json(GRAPH)
+    problems += card_module_problems(g) if g else []
     if LEARNED.exists() and LEARNED.read_text().count("\n") > BUDGET["learned_lines"]:
         problems.append("learned.md over budget: consolidate or prune")
     print("\n".join(problems) or "ok: budgets respected, no dead paths")

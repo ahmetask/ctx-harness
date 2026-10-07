@@ -613,6 +613,71 @@ class TranscriptFixtures(unittest.TestCase):
         self.assertFalse((self.repo.root / ".ctx" / "metrics").exists())
 
 
+class Modules(unittest.TestCase):
+    """Modules follow package manifests; markdown is indexed as docs; cards must name a real module."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        write(self.repo.root, "plugins/kit/.claude-plugin/plugin.json", '{"name": "kit"}')
+        write(self.repo.root, "plugins/kit/bin/tool.py", "def run_tool():\n    return 1\n")
+        write(self.repo.root, "plugins/kit/agents/reviewer.md", """
+            # Reviewer prompt
+
+            ```bash
+            # not a heading
+            ```
+
+            ## Severity rules
+            Findings come in three levels.
+        """)
+        write(self.repo.root, "svc/go.mod", "module example.com/svc\n\ngo 1.22\n")
+        write(self.repo.root, "svc/internal/store/store.go", "package store\n\ntype Store struct{}\n")
+        write(self.repo.root, "svc/main.go", "package main\n\nfunc main() {}\n")
+        self.repo.commit("packages")
+        for i in range(2):  # the prompt changes together with its tool, as plugin prompts do
+            write(self.repo.root, "plugins/kit/bin/tool.py", f"def run_tool():\n    return {i + 2}\n")
+            md = self.repo.root / "plugins/kit/agents/reviewer.md"
+            md.write_text(md.read_text() + f"- rule {i}\n")
+            self.repo.commit(f"tool and prompt {i}")
+        self.out = self.repo.ctxh("build-index").stdout
+        self.graph = json.loads((self.repo.root / ".ctx" / "graph.json").read_text())
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_package_roots_group_modules(self):
+        files = self.graph["files"]
+        self.assertEqual(files["plugins/kit/bin/tool.py"]["module"], "plugins/kit")
+        self.assertEqual(files["svc/internal/store/store.go"]["module"], "svc/internal/store")
+        self.assertEqual(files["svc/main.go"]["module"], "svc")
+        self.assertEqual(files["app/orders/service.py"]["module"], "app/orders")  # no manifest: as before
+        self.assertIn("module plugins/kit:", self.repo.ctxh("q", "module", "tool.py").stdout)
+
+    def test_markdown_is_docs_findable_and_in_cochange_but_never_gated(self):
+        doc = self.graph["files"]["plugins/kit/agents/reviewer.md"]
+        self.assertEqual((doc["role"], doc["module"]), ("docs", "plugins/kit"))
+        self.assertEqual([h for h, _ in doc["symbols"]], ["Reviewer prompt", "Severity rules"])
+        self.assertNotIn("markdown", self.graph["stack"]["languages"])
+        self.assertIn("plugins/kit/agents/reviewer.md:7", self.repo.ctxh("q", "find", "Severity rules").stdout)
+        self.assertIn("plugins/kit/agents/reviewer.md", self.repo.ctxh("q", "cochange", "tool.py").stdout)
+        self.assertNotIn("reviewer.md", self.repo.ctxh("q", "hot", "50").stdout)
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(self.repo.root / "plugins/kit/agents/reviewer.md")})])
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "md", "transcript_path": str(tp)})).stdout
+        self.assertEqual(out, "")
+
+    def test_card_with_unknown_module_is_reported(self):
+        cards = self.repo.root / ".ctx" / "cards"
+        cards.mkdir(parents=True, exist_ok=True)
+        (cards / "plugins.md").write_text("---\nmodule: plugins\nanchors:\n  plugins/kit/bin/tool.py: x\n---\nKit.\n")
+        out = self.repo.ctxh("build-index").stdout
+        self.assertIn("warning: plugins.md: module 'plugins' is not in the index (nearest: plugins/kit)", out)
+        check = self.repo.ctxh("check", check=False)
+        self.assertNotEqual(check.returncode, 0)
+        self.assertIn("module 'plugins' is not in the index", check.stdout)
+
+
 TOY_ADAPTER = """
 import json
 from pathlib import Path
