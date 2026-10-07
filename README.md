@@ -57,7 +57,7 @@ The coder is your normal session rather than a subagent, because the agent that 
 
 ```mermaid
 flowchart LR
-    A["Session start<br/>protocol + map injected"] --> B["Plan<br/>3+ files only"] --> C["Explore<br/>ctxh q, card, scout"] --> D["Implement + review"] --> E["Stop hook<br/>metrics, trace, review gate"]
+    A["Session start<br/>protocol + map injected"] --> B["Plan<br/>3+ files only"] --> C["Explore<br/>ctxh q, card, scout"] --> D["Implement + review"] --> E["Stop hook<br/>metrics, trace, plan + review gates"]
     E -.->|traces| F["Curate<br/>after merge"]
     F -.->|fresh map + cards| A
 ```
@@ -135,6 +135,8 @@ ctxh stats
 
 Sessions labeled `bootstrap` or `curate` count as overhead, and `stats` amortizes them into a break-even estimate. Run several tasks, a few times each; single runs are noisy.
 
+All of this is read out of Claude Code's transcript JSONL, so a format change could zero the numbers and switch the review gate off without anyone noticing. Checked-in fixtures in [tests/fixtures/transcripts](tests/fixtures/transcripts) pin the parse, and when a real transcript yields no `usage` or no tool name the engine knows, `ctxh usage` fails with the reason and the Stop hook warns once on stderr instead of recording a row of zeros.
+
 ## Automating curation
 
 Curation should follow merges, not run during a task. Options:
@@ -149,6 +151,7 @@ Curation should follow merges, not run during a task. Options:
 | `CTXH_DISABLED=1` | Harness off for the session: nothing is injected, and the run is recorded as `baseline` |
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
 | `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check |
+| `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
 
 ## Development
 
@@ -162,6 +165,6 @@ claude --plugin-dir ./plugins/ctx-harness  # try local changes without installin
 ## Limits
 
 - **Parsing:** import and symbol parsing is regex-based. Tree-sitter would make it more precise.
-- **Token accounting:** reads Claude Code's transcript format, which can change between versions.
+- **Token accounting:** reads Claude Code's transcript format, which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
 - **Local traces:** traces stay on each machine. For team-wide curation, ship them to a shared store, such as Redis, and point the curator there.
-- **Planner trigger:** the planner rule is enforced only by instructions plus the per-prompt reminder. The reviewer is the only step a hook checks.
+- **Gates fire at the end:** both the plan and review checks run in the Stop hook, so they catch an unplanned or unreviewed change when the session tries to finish rather than when it starts. A PreToolUse gate would interrupt mid-change; this costs a turn instead.

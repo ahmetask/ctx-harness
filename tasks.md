@@ -20,10 +20,10 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T03 | Keep hand-verified commands across re-index | dogfooding | P1 | done |
 | T04 | Module grouping and markdown-only modules | dogfooding | P2 | todo |
 | T05 | Document the dogfooding setup (installed plugin vs working tree) | dogfooding | P2 | todo |
-| T06 | Transcript parser fixtures and version guard | measurement | P1 | todo |
+| T06 | Transcript parser fixtures and version guard | measurement | P1 | done |
 | T07 | Benchmark platform with a demo repo | measurement | P1 | done |
 | T08 | Mid-session context management (compaction) | context | P2 | todo |
-| T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | todo |
+| T09 | Hook-enforced plan gate for 3+ file changes | enforcement | P2 | done |
 | T10 | Semantic/keyword retrieval fallback for `ctxh q` | retrieval | P3 | todo |
 | T11 | Optional tree-sitter parsing | retrieval | P3 | todo |
 | T12 | Shared trace store for team-wide curation | learning | P3 | todo |
@@ -69,9 +69,8 @@ Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before ch
 
 ## Measurement
 
-### T06 · Transcript parser fixtures and version guard
-- **Problem:** token accounting and the review gate depend on Claude Code's transcript JSONL format (`usage`, `isSidechain`, `subagents/`, tool names). A format change silently zeroes metrics or disables the gate.
-- **Done when:** checked-in fixture transcripts (main session plus subagent) have tests that assert the parsed tokens, files, commands and gate decision. `ctxh usage` and the Stop hook warn, once, when a transcript yields no usage or no recognized tool calls instead of recording zeros.
+### T06 · Transcript parser fixtures and version guard (done)
+Fixtures in `tests/fixtures/transcripts/` (a session with a subagent, a reviewed session, and two drifted formats) pin tokens, files, commands and the gate decision. Tool names live in one `TOOLS` table, and a transcript with no `usage` or no known tool name makes `ctxh usage` fail and the Stop hook warn once instead of recording zeros. See `.ctx/tasks/done/T06-transcript-fixtures.md`.
 
 ### T07 · Benchmark platform with a demo repo (done)
 - Built `bench/`: a Go demo repo (`shopd`) with scripted history, 6 tasks with hidden checks and reference solutions, a runner (`claude`, `fake` and `noop` agents) and a report. See `bench/README.md` and `.ctx/tasks/done/T07-benchmark-platform.md`.
@@ -86,9 +85,8 @@ Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before ch
 - **Problem:** the harness controls what loads at session start and what gets pulled on demand, but does nothing when a long task fills the context window. After compaction the protocol, map and plan progress may be summarized away.
 - **Done when:** a `PreCompact` (or equivalent) hook re-injects the protocol pointer, the active plan path and its progress-log tail after compaction, so a compacted session resumes from `.ctx/tasks/active.md`. Tests cover the hook output.
 
-### T09 · Hook-enforced plan gate
-- **Problem:** "plan before touching 3+ files" is only an instruction plus the per-prompt reminder. The review gate is the only rule a hook enforces.
-- **Done when:** the Stop hook (or a PreToolUse hook, decide in the plan) detects 3+ distinct code files edited in a session with no `.ctx/tasks/active.md` written by the planner, and blocks once, with the same once-per-state guarantee as the review gate. `CTXH_PLAN_GATE=0` disables it. Tests cover block, pass and the off switch.
+### T09 · Hook-enforced plan gate (done)
+The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ctx/tasks/active.md`, or a planner call in the session), before the review gate; both share `gate_once` and `.ctx/tmp/gates/<session>.json`. `CTXH_PLAN_GATE=0` turns it off. See `.ctx/tasks/done/T09-plan-gate.md`.
 
 ### T19 · Review gate outside the agent
 - **Problem:** the review gate only exists inside Claude Code sessions. Other agents and humans bypass it.
