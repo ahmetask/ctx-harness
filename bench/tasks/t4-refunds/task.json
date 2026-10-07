@@ -1,0 +1,13 @@
+{
+  "id": "t4-refunds",
+  "category": "cross-module",
+  "prompt": "Add refunds. A new order state `refunded` is reachable from `paid` and from `delivered` orders. Add `Refund(id string) (orders.Order, error)` to the order service: it refunds the full order total through the payment client and moves the order to `refunded`; the customer is told by email, like for every other state change. Refunding an order in any other state must fail with orders.ErrInvalidTransition. Expose it as `POST /orders/{id}/refund` in the HTTP API (409 when the state does not allow it). Keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./internal/orders/", "./internal/httpapi/"]
+  ],
+  "hidden": {
+    "hidden/hidden_refund_test.go": "internal/orders/hidden_refund_test.go",
+    "hidden/hidden_refund_http_test.go": "internal/httpapi/hidden_refund_http_test.go"
+  },
+  "max_turns": 60
+}

@@ -106,6 +106,15 @@ Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nes
 
 ## Measuring against a baseline
 
+`bench/` holds a benchmark platform: a demo Go repo with scripted git history, 6 tasks with hidden acceptance tests, and a runner that compares harness and baseline sessions on tokens and pass rate. See [bench/README.md](bench/README.md).
+
+```bash
+python3 bench/run.py --agent fake                   # offline smoke run of the platform
+python3 bench/run.py --agent claude --repeats 3     # real harness-vs-baseline runs
+```
+
+To measure on your own repo and tasks instead:
+
 ```bash
 CTXH_TASK=t1 claude -p "<task>"                     # harness run
 git stash -u
@@ -133,7 +142,7 @@ Curation should follow merges, not run during a task. Options:
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests      # engine tests, using throwaway git repos
+python3 -m unittest discover -s tests      # engine and benchmark tests (benchmark ones need Go)
 claude plugin validate .                   # marketplace manifest
 claude plugin validate ./plugins/ctx-harness
 claude --plugin-dir ./plugins/ctx-harness  # try local changes without installing

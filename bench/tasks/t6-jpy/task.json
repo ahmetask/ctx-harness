@@ -1,0 +1,12 @@
+{
+  "id": "t6-jpy",
+  "category": "feature",
+  "prompt": "Add support for Japanese yen (JPY). Yen has no minor unit: amounts are whole yen, formatting prints them like ¥1,200 (no decimal point), parsing a currency code accepts \"jpy\" in any case, and parsing an amount such as \"12.5\" for JPY is an error while \"1200\" is 1200 yen. Existing currencies must format and parse exactly as before. Keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./internal/money/"]
+  ],
+  "hidden": {
+    "hidden/hidden_jpy_test.go": "internal/money/hidden_jpy_test.go"
+  },
+  "max_turns": 40
+}
