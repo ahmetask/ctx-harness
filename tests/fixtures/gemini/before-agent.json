@@ -1,0 +1,8 @@
+{
+ "session_id": "5f1c2a90-3b7e-4d21-9a0c-1e2f3a4b5c6d",
+ "transcript_path": "{TRANSCRIPT}",
+ "cwd": "{ROOT}",
+ "timestamp": "2026-10-07T10:00:00.000Z",
+ "hook_event_name": "BeforeAgent",
+ "prompt": "Stop double charges in OrderService.place"
+}

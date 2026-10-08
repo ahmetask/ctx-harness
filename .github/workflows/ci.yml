@@ -21,6 +21,20 @@ jobs:
           cache: false
       - run: python -m unittest discover -s tests -v
 
+  engine-tree-sitter:  # the optional parser: same tests, with tree-sitter and its grammars installed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: false
+      - run: pip install tree-sitter tree-sitter-python tree-sitter-go tree-sitter-javascript tree-sitter-typescript tree-sitter-java tree-sitter-rust tree-sitter-ruby
+      - run: python -m unittest discover -s tests -v
+
   plugin:
     runs-on: ubuntu-latest
     steps:
@@ -31,3 +45,9 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code
       - run: claude plugin validate .
       - run: claude plugin validate ./plugins/ctx-harness
+      - name: Agent and skill files match prompts/
+        run: python3 plugins/ctx-harness/bin/ctxh export --tool claude --check
+      - name: Gemini CLI extension validates
+        run: |
+          python3 plugins/ctx-harness/bin/ctxh export --tool gemini --out "$RUNNER_TEMP/gemini/ctx-harness"
+          npx -y @google/gemini-cli extensions validate "$RUNNER_TEMP/gemini/ctx-harness"

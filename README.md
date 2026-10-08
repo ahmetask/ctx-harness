@@ -66,7 +66,7 @@ Step-by-step sequence diagrams are in [docs/flow.md](docs/flow.md).
 
 **Hooks** (they run automatically, and only in repos that have `.ctx/`):
 
-- **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index.
+- **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index. It runs again after the conversation is compacted (and on `--resume`). When a plan is active, the injection then names the plan and repeats the last 8 entries of its progress log, so the agent picks up where it left off instead of re-planning.
 - **UserPromptSubmit:** a one-line reminder of the two rules agents skip most often: plan for 3+ files, and review before finishing.
 - **Stop:** records tokens, steps, files read and edited, failed commands and empty index queries. If code changed since the last reviewer run, it blocks finishing once and asks for a review. It blocks only once per edit, so it can't loop.
 
@@ -93,6 +93,7 @@ Commit `.ctx/`; its own `.gitignore` keeps the derived and per-machine files out
 ```bash
 ctxh q hot                       # most central files (PageRank over imports)
 ctxh q find OrderService         # symbol -> file:line
+ctxh q search double charge      # concept -> file:line, ranked by names, comments and docstrings (BM25)
 ctxh q impact app/payments/client.py
 ctxh q cochange client.py        # files that change with it in git history
 ctxh q risk client.py            # fix/revert commits touching it
@@ -103,7 +104,9 @@ ctxh stats                       # harness vs baseline token medians and break-e
 ctxh add-command test "<cmd>" [--replaces "<detected cmd>"]   # keep a fixed or added command
 ```
 
-Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). Modules are grouped by folder.
+`q search` is a keyword fallback for questions phrased in domain terms. It ranks every symbol by its split name plus the comments above it and the docstring or comments at the top of its body, as well as loose comment blocks and markdown sections. When `q find` has no symbol by that name, it answers with the same ranking instead of nothing.
+
+Imports and symbols are parsed with regexes for Python, JS/TS, Go (including nested modules), Java/Kotlin, Rust, Ruby and shell. If the `tree_sitter` package and a language's grammar (`tree-sitter-python`, `-go`, `-javascript`, `-typescript`, `-java`, `-rust`, `-ruby`) are installed for the Python that runs `ctxh`, that language is parsed from its syntax tree instead. That catches nested definitions, class methods and multi-line imports, and ignores code-like text inside strings. Nothing changes when they aren't installed. `graph.json` records which parser ran per language, and `CTXH_PARSER=regex` forces the regexes. Extensionless scripts are indexed by their shebang (`python`, `node`, `ruby`, `bash`/`sh`). A directory holding a package manifest (`package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, a plugin's `.claude-plugin/plugin.json` and so on) is a module; elsewhere modules are top-level folders, one level deeper under `src/`, `internal/`, `packages/` and similar. Markdown files are indexed as docs: `q find` matches their headings and `q cochange` pairs them with the code they change with, but they never count as code for the gates, `q hot` or staleness. `build-index` and `ctxh check` flag a card whose `module:` is not in the index.
 
 **What gets indexed.** Every file git tracks, except dependency and build folders, `testdata/`, and paths matched by a `.ctxignore` at the repo root. It uses gitignore syntax and keeps fixtures, vendored samples and test data out of the index and command detection:
 
@@ -113,11 +116,13 @@ fixtures/
 *_gen.py
 ```
 
+**Agent adapters.** The engine itself is tool-neutral. Where the project root comes from, what a hook receives and how it answers, how a session log is read and which tool names mean read, edit, shell or subagent all live in one adapter module, [`plugins/ctx-harness/adapters/claude.py`](plugins/ctx-harness/adapters/claude.py) for Claude Code. Supporting another agent means writing one more adapter; [the adapters README](plugins/ctx-harness/adapters/README.md) has the interface.
+
 **Commands.** `build-index` proposes build, lint and test commands from Makefiles, manifests and CI `run:` steps (installs, deploys and steps with `${{ }}` expressions are skipped). `--verify` runs them. When an agent fixes or adds one with `ctxh add-command`, it is stored as `source: manual`, survives re-index and is re-run by `--verify`. `--replaces` retires the detected command it fixes.
 
 ## Measuring against a baseline
 
-`bench/` holds a benchmark platform: a demo Go repo with scripted git history, 6 tasks with hidden acceptance tests, and a runner that compares harness and baseline sessions on tokens and pass rate. See [bench/README.md](bench/README.md).
+`bench/` holds a benchmark platform: a demo Go repo with scripted git history, 6 tasks with hidden acceptance tests, and a runner that compares harness and baseline sessions on tokens and pass rate. See [bench/README.md](bench/README.md); results so far are in [docs/benchmark.md](docs/benchmark.md).
 
 ```bash
 python3 bench/run.py --agent fake                   # offline smoke run of the platform
@@ -133,9 +138,99 @@ CTXH_TASK=t1 CTXH_DISABLED=1 claude -p "<task>"     # same task, harness off
 ctxh stats
 ```
 
+Every metric record carries the agent that produced it (`tool`, from the adapter). `ctxh stats` groups by tool and label, and pairs harness and baseline runs only within the same tool.
+
+**Agents without a readable transcript.** Count their tokens at an LLM proxy or gateway instead. Have the gateway tag each request with a session id, export its request log as JSONL (one request per line), and import it:
+
+```bash
+ctxh usage --gateway requests.jsonl --tool codex --label harness --task t1
+```
+
+Each line needs a session id (`session`, `session_id`, `metadata.session_id`, `metadata.session` or `trace_id`) and usage, either at the top level or under `usage`. Both naming styles are accepted: `input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, and `prompt_tokens`/`completion_tokens`/`prompt_tokens_details.cached_tokens` (cached tokens are subtracted from `prompt_tokens`, so nothing is counted twice). Lines without a session id are skipped. Gateway rows have no step count, so `stats` shows `-` for their steps.
+
 Sessions labeled `bootstrap` or `curate` count as overhead, and `stats` amortizes them into a break-even estimate. Run several tasks, a few times each; single runs are noisy.
 
 All of this is read out of Claude Code's transcript JSONL, so a format change could zero the numbers and switch the review gate off without anyone noticing. Checked-in fixtures in [tests/fixtures/transcripts](tests/fixtures/transcripts) pin the parse, and when a real transcript yields no `usage` or no tool name the engine knows, `ctxh usage` fails with the reason and the Stop hook warns once on stderr instead of recording a row of zeros.
+
+## Other agents
+
+The index, queries and checks work for any coding agent. Only the hooks (automatic injection, freshness notices, the plan and review gates) and the helper subagents need agent support: Claude Code has them through the plugin and Gemini CLI through a generated extension (below). To point any other agent at the harness, write its instructions file:
+
+```bash
+ctxh init --target agents-md      # AGENTS.md: Codex, GitHub Copilot's coding agent, and other AGENTS.md readers
+ctxh init --target gemini         # GEMINI.md: Gemini CLI
+ctxh init --target cursor         # .cursor/rules/ctx-harness.mdc, applied to every request
+ctxh init --target aider          # CONVENTIONS.md, plus `read: CONVENTIONS.md` in .aider.conf.yml
+ctxh init --target agents-md,gemini   # several at once
+```
+
+Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, plan to `.ctx/tasks/active.md` before touching 3+ files, and run `ctxh stale` at the end. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
+
+### Gemini CLI extension
+
+Gemini CLI has lifecycle hooks and subagents, so it gets the whole harness: injection, metrics, both gates, the four helper agents and the three skills. Generate an extension from a checkout and link it:
+
+```bash
+python3 plugins/ctx-harness/bin/ctxh export --tool gemini --out ~/ctx-harness-gemini/ctx-harness
+gemini extensions link ~/ctx-harness-gemini/ctx-harness
+```
+
+The extension carries its own copy of `ctxh` and the adapters; re-run the export after pulling. Its hooks run `ctxh hook-start`, `hook-prompt` and `hook-stop` with `--tool gemini` on SessionStart, BeforeAgent and AfterAgent (Gemini cleans the hook environment, so the adapter is named on the command line rather than in `CTXH_TOOL`). The helpers are the subagents `ctx-harness-scout`, `ctx-harness-planner`, `ctx-harness-reviewer` and `ctx-harness-card-writer`; `/ctx-harness:build`, `/ctx-harness:curate` and `/ctx-harness:status` are commands, and `build` is also a skill the model can activate. The agents run on the session's model.
+
+When a gate fires, the AfterAgent hook denies the reply and Gemini retries with the gate's reason as the next prompt, once per edit, as in Claude Code. Gemini has no start event after compression, so the resume note only appears on `/resume`.
+
+Checked against Gemini CLI 0.63.0: `gemini extensions validate` passes, and a session in the demo repo ran the extension's start and prompt hooks with the protocol naming the Gemini agents. That session had no valid API key, so the stop hook and the session-log reader are tested on a log assembled from Gemini's recorder source (`tests/fixtures/gemini/`), not on a live model turn.
+
+To wire the hooks by hand instead, add them to `.gemini/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "python3 /path/to/ctxh hook-start --tool gemini"}]}],
+    "BeforeAgent": [{"hooks": [{"type": "command", "command": "python3 /path/to/ctxh hook-prompt --tool gemini"}]}],
+    "AfterAgent": [{"hooks": [{"type": "command", "command": "python3 /path/to/ctxh hook-stop --tool gemini"}]}]
+  }
+}
+```
+
+### Prompts for each agent
+
+The agent and skill prompts are written once, in `plugins/ctx-harness/prompts/`, with placeholders for what differs between agents: `{{agent:scout}}` (Claude Code: `ctx-harness:scout`, Gemini CLI: `ctx-harness-scout`), `{{command:build}}`, `{{tool:read}}`, and lines starting with `{{only:claude}}` or `{{only:gemini}}`. `protocol.md` uses the same placeholders and is filled at hook time. After editing a prompt, regenerate the Claude Code files with `ctxh export --tool claude`; CI runs `export --tool claude --check`, which fails when `agents/` or `skills/` differ from `prompts/`. Another agent needs an adapter with `render_agent`, `render_skill` and, if it installs a package, `package` (see `plugins/ctx-harness/adapters/README.md`).
+
+## Review gate outside the agent (opt-in)
+
+The Stop-hook review gate only sees edits a Claude Code session makes with its edit tools. Edits from other agents, from humans, or from an agent writing files through the shell get past it. For those, opt in to a review record that commits and CI can check:
+
+```bash
+ctxh review-check --install-hook     # creates .ctx/reviews.json and a pre-commit hook running `review-check --staged`
+ctxh review-record                   # after reviewing: stamp the current content of every changed code file
+ctxh review-record app/orders/service.py   # or specific files
+ctxh review-check                    # working tree vs HEAD; --staged for the index; --base origin/main for a branch
+```
+
+`.ctx/reviews.json` maps each reviewed code file to the git blob id of the content that was reviewed. Commit it with the change. Any edit after the review changes the blob, so the check fails again until the new content is reviewed. Once the file exists, Claude Code sessions write the record themselves when `ctx-harness:reviewer` runs after the last code edit.
+
+In CI, check a pull request against its base. This needs the history: `fetch-depth: 0`.
+
+```yaml
+- run: python3 path/to/ctx-harness/plugins/ctx-harness/bin/ctxh review-check --base origin/${{ github.base_ref }}
+```
+
+A record shows that someone ran `review-record` on that exact content. It doesn't show that the review was any good. `CTXH_REVIEW_GATE=0` skips the check. After updating the plugin, re-run `--install-hook`, because the hook points at the `ctxh` path it was installed from.
+
+## Sharing traces across a team (opt-in)
+
+By default traces stay in each machine's `.ctx/traces/`, so the curator learns from one developer's sessions. Set `CTXH_TRACE_SINK` and every harness session also sends its trace to a shared store, and `ctxh signals` (which the curate skill reads) merges the shared traces with the local ones, counting each session once:
+
+| `CTXH_TRACE_SINK` | Store |
+|---|---|
+| a directory path (for example on a shared drive) | `<dir>/<repo>/<session>.json` |
+| `https://…` | `POST` one JSON trace per session; `GET <url>?repo=<repo>` must return a JSON list of them |
+| `redis://[:password@]host[:port][/db]` | a list `ctxh:traces:<repo>`, trimmed to the newest 2000 (stdlib client, no package needed) |
+
+`<repo>` is `CTXH_TRACE_REPO`, or the `origin` URL with any credentials removed (`github.com_acme_shop`). Sending waits at most 3 seconds and never fails a session. An unreachable store prints one warning and the local trace is still written. With the variable unset, nothing changes.
+
+**Privacy.** A shared trace holds repo-relative paths of files read and edited, the shell commands the agent ran (first 200 characters each), the `ctxh q` queries, subagent names, the task label and timestamps. It never holds file contents or command output: the failure output kept in local traces is dropped before sending. Commands can still contain anything typed on a command line, such as a token passed as an argument, so point the sink only at a store your team already trusts with that.
 
 ## Automating curation
 
@@ -150,8 +245,12 @@ Curation should follow merges, not run during a task. Options:
 |---|---|
 | `CTXH_DISABLED=1` | Harness off for the session: nothing is injected, and the run is recorded as `baseline` |
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
-| `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check |
+| `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check and `ctxh review-check` |
 | `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
+| `CTXH_PARSER=regex` | Use the regex parser even when tree-sitter is installed |
+| `CTXH_TRACE_SINK=<dir or URL>` | Also send each trace to a shared directory, HTTP endpoint or Redis; `ctxh signals` reads it back |
+| `CTXH_TRACE_REPO=<name>` | The repo's key in the shared store (default: the `origin` URL) |
+| `CTXH_TOOL=<name>` | Agent adapter to load from `plugins/ctx-harness/adapters/` (default `claude`) |
 
 ## Development
 
@@ -163,11 +262,13 @@ claude --plugin-dir ./plugins/ctx-harness  # try local changes without installin
 python3 bench/sandbox.py                   # demo repo wired to this checkout, plus hook/query smoke checks
 ```
 
+**Which copy of the plugin runs.** This repo's `.claude/settings.json` enables the published plugin (`ctx-harness@ctx-harness`, from GitHub), so a normal session here dogfoods the released version. Claude Code installs it into `~/.claude/plugins/cache/` pinned to the commit it saw at install time, and it does not follow the working tree. To run your local changes, start the session with `--plugin-dir ./plugins/ctx-harness`. A `--plugin-dir` plugin with the same name replaces the installed one for that session, so nothing loads twice. Its hooks, agents, skills and `bin/ctxh` on `PATH` are all the local ones. This was checked on Claude Code 2.1.292 by marking the local copy and counting hook runs in the transcript: one SessionStart, one UserPromptSubmit and one Stop hook, all from the local copy. Without the flag, everything comes from the cached release. To refresh the cached release after a merge, run `claude plugin update ctx-harness@ctx-harness`. `ctxh` itself can always be run from the checkout as `python3 plugins/ctx-harness/bin/ctxh`.
+
 To verify a change on a realistic repo, `bench/sandbox.py` materializes the shopd demo, builds its `.ctx/` with the working-tree `ctxh` and drives the hooks and queries the way Claude Code would. It prints the command for an interactive session in it; `--prompt "<task>"` runs one real `claude -p` session there instead and reports tokens, steps and changed files (`--baseline` for the same session with the harness off).
 
 ## Limits
 
-- **Parsing:** import and symbol parsing is regex-based. Tree-sitter would make it more precise.
-- **Token accounting:** reads Claude Code's transcript format, which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
-- **Local traces:** traces stay on each machine. For team-wide curation, ship them to a shared store, such as Redis, and point the curator there.
+- **Parsing:** import and symbol parsing is regex-based unless tree-sitter is installed (optional). There is no call graph either way.
+- **Token accounting:** reads Claude Code's transcript format (in its adapter), which can change between versions. Fixtures pin the current shape and a drift warns, but refreshing them is manual.
+- **Shared traces are opt-in:** without `CTXH_TRACE_SINK`, the curator learns only from the machine it runs on.
 - **Gates fire at the end:** both the plan and review checks run in the Stop hook, so they catch an unplanned or unreviewed change when the session tries to finish rather than when it starts. A PreToolUse gate would interrupt mid-change; this costs a turn instead.

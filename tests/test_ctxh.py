@@ -225,6 +225,25 @@ class CardsAndHooks(unittest.TestCase):
         (self.repo.root / ".ctx" / "protocol.md").write_text("# Team protocol\n")
         self.assertIn("# Team protocol", self.repo.ctxh("hook-start", stdin="{}").stdout)
 
+    def test_compaction_resumes_from_the_active_plan(self):
+        start = lambda source: self.repo.ctxh("hook-start", stdin=json.dumps({"source": source})).stdout
+        self.assertEqual(start("compact"), start("startup"))  # no plan: compaction re-injects the same context
+        log = "\n".join(f"- step {i} done" for i in range(1, 11))
+        (self.repo.root / ".ctx" / "tasks").mkdir(parents=True, exist_ok=True)
+        (self.repo.root / ".ctx" / "tasks" / "active.md").write_text(
+            f"# T99 · Retry payments\n\n## Goal\nRetry.\n\n## Progress log\n{log}\n")
+        out = start("compact")
+        self.assertIn("# Working protocol (context harness)", out)
+        self.assertIn("# Repo map", out)
+        self.assertIn("Context was compacted mid-task. You are working on the plan in .ctx/tasks/active.md "
+                      "(T99 · Retry payments)", out)
+        self.assertIn("Last 8 progress entries:\n- step 3 done\n", out)
+        self.assertIn("- step 10 done", out)
+        self.assertNotIn("- step 2 done", out)
+        self.assertIn("This session resumed mid-task", start("resume"))
+        self.assertIn("Active plan exists: .ctx/tasks/active.md (read it first).", start("startup"))
+        self.assertNotIn("progress entries", start("startup"))
+
     def test_disabled_injects_nothing(self):
         out = self.repo.ctxh("hook-start", stdin="{}", env={"CTXH_DISABLED": "1"}).stdout
         self.assertEqual(out, "")
@@ -611,6 +630,710 @@ class TranscriptFixtures(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no `usage`", r.stderr)
         self.assertFalse((self.repo.root / ".ctx" / "metrics").exists())
+
+
+class Modules(unittest.TestCase):
+    """Modules follow package manifests; markdown is indexed as docs; cards must name a real module."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        write(self.repo.root, "plugins/kit/.claude-plugin/plugin.json", '{"name": "kit"}')
+        write(self.repo.root, "plugins/kit/bin/tool.py", "def run_tool():\n    return 1\n")
+        write(self.repo.root, "plugins/kit/agents/reviewer.md", """
+            # Reviewer prompt
+
+            ```bash
+            # not a heading
+            ```
+
+            ## Severity rules
+            Findings come in three levels.
+        """)
+        write(self.repo.root, "svc/go.mod", "module example.com/svc\n\ngo 1.22\n")
+        write(self.repo.root, "svc/internal/store/store.go", "package store\n\ntype Store struct{}\n")
+        write(self.repo.root, "svc/main.go", "package main\n\nfunc main() {}\n")
+        self.repo.commit("packages")
+        for i in range(2):  # the prompt changes together with its tool, as plugin prompts do
+            write(self.repo.root, "plugins/kit/bin/tool.py", f"def run_tool():\n    return {i + 2}\n")
+            md = self.repo.root / "plugins/kit/agents/reviewer.md"
+            md.write_text(md.read_text() + f"- rule {i}\n")
+            self.repo.commit(f"tool and prompt {i}")
+        self.out = self.repo.ctxh("build-index").stdout
+        self.graph = json.loads((self.repo.root / ".ctx" / "graph.json").read_text())
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_package_roots_group_modules(self):
+        files = self.graph["files"]
+        self.assertEqual(files["plugins/kit/bin/tool.py"]["module"], "plugins/kit")
+        self.assertEqual(files["svc/internal/store/store.go"]["module"], "svc/internal/store")
+        self.assertEqual(files["svc/main.go"]["module"], "svc")
+        self.assertEqual(files["app/orders/service.py"]["module"], "app/orders")  # no manifest: as before
+        self.assertIn("module plugins/kit:", self.repo.ctxh("q", "module", "tool.py").stdout)
+
+    def test_markdown_is_docs_findable_and_in_cochange_but_never_gated(self):
+        doc = self.graph["files"]["plugins/kit/agents/reviewer.md"]
+        self.assertEqual((doc["role"], doc["module"]), ("docs", "plugins/kit"))
+        self.assertEqual([h for h, _ in doc["symbols"]], ["Reviewer prompt", "Severity rules"])
+        self.assertNotIn("markdown", self.graph["stack"]["languages"])
+        self.assertIn("plugins/kit/agents/reviewer.md:7", self.repo.ctxh("q", "find", "Severity rules").stdout)
+        self.assertIn("plugins/kit/agents/reviewer.md", self.repo.ctxh("q", "cochange", "tool.py").stdout)
+        self.assertNotIn("reviewer.md", self.repo.ctxh("q", "hot", "50").stdout)
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(self.repo.root / "plugins/kit/agents/reviewer.md")})])
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "md", "transcript_path": str(tp)})).stdout
+        self.assertEqual(out, "")
+
+    def test_card_with_unknown_module_is_reported(self):
+        cards = self.repo.root / ".ctx" / "cards"
+        cards.mkdir(parents=True, exist_ok=True)
+        (cards / "plugins.md").write_text("---\nmodule: plugins\nanchors:\n  plugins/kit/bin/tool.py: x\n---\nKit.\n")
+        out = self.repo.ctxh("build-index").stdout
+        self.assertIn("warning: plugins.md: module 'plugins' is not in the index (nearest: plugins/kit)", out)
+        check = self.repo.ctxh("check", check=False)
+        self.assertNotEqual(check.returncode, 0)
+        self.assertIn("module 'plugins' is not in the index", check.stdout)
+
+
+class InitTargets(unittest.TestCase):
+    """`ctxh init --target` writes a marked, idempotent block into other agents' instruction files."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_each_target_is_written_once_and_points_at_ctx(self):
+        out = self.repo.ctxh("init", "--target", "agents-md,gemini,cursor,aider").stdout
+        files = {"AGENTS.md", "GEMINI.md", ".cursor/rules/ctx-harness.mdc", "CONVENTIONS.md"}
+        before = {f: (self.repo.root / f).read_text() for f in files}
+        for f, text in before.items():
+            self.assertIn(f"{f}: created", out)
+            self.assertEqual(text.count("<!-- ctx-harness:begin -->"), 1, f)
+            self.assertIn(".ctx/map.md", text)
+            self.assertIn("ctxh q find", text)
+            self.assertNotIn("ctx-harness:scout", text)  # no Claude-only helpers in another agent's file
+        self.assertTrue(before[".cursor/rules/ctx-harness.mdc"].startswith("---\ndescription:"))
+        self.assertIn("alwaysApply: true", before[".cursor/rules/ctx-harness.mdc"])
+        self.assertEqual((self.repo.root / ".aider.conf.yml").read_text(), "read: CONVENTIONS.md\n")
+        self.assertNotIn("no .ctx/ yet", out)
+        again = self.repo.ctxh("init", "--target", "agents-md,gemini,cursor,aider").stdout
+        self.assertEqual(again.count("unchanged"), 4)
+        self.assertEqual(before, {f: (self.repo.root / f).read_text() for f in files})
+
+    def test_text_around_the_block_is_kept_and_an_old_block_replaced(self):
+        agents = self.repo.root / "AGENTS.md"
+        agents.write_text("# House rules\n\nTabs.\n\n<!-- ctx-harness:begin -->\nold\n<!-- ctx-harness:end -->\n\n"
+                          "## After\nKeep me.\n")
+        self.assertIn("AGENTS.md: updated", self.repo.ctxh("init", "--target", "agents-md").stdout)
+        text = agents.read_text()
+        self.assertTrue(text.startswith("# House rules\n\nTabs.\n\n<!-- ctx-harness:begin -->\n## Repository"))
+        self.assertTrue(text.endswith("<!-- ctx-harness:end -->\n\n## After\nKeep me.\n"))
+        self.assertNotIn("\nold\n", text)
+
+    def test_aider_config_with_its_own_read_list_is_left_alone(self):
+        conf = self.repo.root / ".aider.conf.yml"
+        conf.write_text("read:\n  - STYLE.md\n")
+        out = self.repo.ctxh("init", "--target", "aider").stdout
+        self.assertIn("add CONVENTIONS.md to it", out)
+        self.assertEqual(conf.read_text(), "read:\n  - STYLE.md\n")
+
+    def test_unknown_target_and_missing_ctx(self):
+        r = self.repo.ctxh("init", "--target", "vim", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("agents-md|gemini|cursor|aider", r.stderr)
+        bare = Repo()
+        try:
+            out = bare.ctxh("init", "--target", "gemini").stdout
+            self.assertIn("no .ctx/ yet", out)
+            self.assertFalse((bare.root / ".ctx").exists())
+        finally:
+            bare.cleanup()
+
+
+try:
+    import tree_sitter  # noqa: F401  (optional: CI's tree-sitter job installs it, the default job does not)
+    HAVE_TREE_SITTER = True
+except ImportError:
+    HAVE_TREE_SITTER = False
+
+
+class Parsers(unittest.TestCase):
+    """Tree-sitter when installed, regexes otherwise; the graph says which one ran per language."""
+
+    def test_regex_is_recorded_when_forced_or_unavailable(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            repo.ctxh("build-index", env={"CTXH_PARSER": "regex"})
+            stack = json.loads((repo.root / ".ctx" / "graph.json").read_text())["stack"]
+            self.assertEqual(stack["parsers"], {"python": "regex"})
+        finally:
+            repo.cleanup()
+
+    @unittest.skipUnless(HAVE_TREE_SITTER, "tree_sitter is not installed")
+    def test_tree_sitter_finds_what_regexes_miss(self):
+        m = load_ctxh()
+        py = "def outer():\n" + "            def deeply_nested():\n                pass\n" \
+             + 'DOC = """\ndef not_code():\n"""\nfrom .pkg import (\n    a,\n)\nimport os.path as p\n'
+        specs, symbols = m.ts_extract("python", "x.py", py)
+        self.assertEqual(symbols, [["outer", 1], ["deeply_nested", 2]])  # nested kept, string content ignored
+        self.assertEqual(specs, [".pkg", "os.path"])
+        js = "import {\n  a,\n} from './a';\nconst b = require('./b');\nexport class Router {\n  route() {}\n}\n"
+        specs, symbols = m.ts_extract("javascript", "x.js", js)
+        self.assertEqual(specs, ["./a", "./b"])
+        self.assertEqual(symbols, [["b", 4], ["Router", 5], ["route", 6]])  # methods too
+        go = 'package x\n\nimport (\n\t"example.com/m/a"\n)\n\nfunc F() {\n\ttype key struct{}\n}\n'
+        self.assertEqual(m.ts_extract("go", "x.go", go), (["example.com/m/a"], [["F", 7], ["key", 8]]))
+        self.assertIsNone(m.ts_extract("kotlin", "x.kt", "fun f() {}"))  # no grammar: regex path
+
+
+class KeywordSearch(unittest.TestCase):
+    """`ctxh q search` and the `q find` fallback: concept words find code through names, comments, docstrings."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = Repo()
+        python_app(cls.repo)
+        write(cls.repo.root, "app/payments/ledger.py", """
+            # Every provider call carries a key derived from the order, so a retried
+            # request never produces a double charge.
+            def provider_key(order_id):
+                return f"order:{order_id}"
+
+
+            def settle(entries):
+                \"\"\"Close the books for the day: sum the settlements per merchant.\"\"\"
+                return sum(entries)
+        """)
+        write(cls.repo.root, "docs/ops.md", "# Operations\n\n## Rotating secrets\nKeys are rotated every quarter.\n")
+        cls.repo.commit("ledger")
+        cls.repo.ctxh("build-index")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.repo.cleanup()
+
+    def q(self, *args):
+        return self.repo.ctxh("q", *args).stdout
+
+    def test_terms_split_identifiers_and_stem(self):
+        m = load_ctxh()
+        self.assertEqual(m.terms("chargeOnce retry_policies HTTPServer charging"),
+                         ["charg", "once", "retry", "policy", "http", "server", "charg"])
+        self.assertEqual(m.terms("where is the"), [])
+
+    def test_search_answers_from_comments_and_docstrings(self):
+        self.assertTrue(self.q("search", "double", "charge").startswith("app/payments/ledger.py:3  provider_key"))
+        self.assertTrue(self.q("search", "close", "books", "merchant").startswith("app/payments/ledger.py:7  settle"))
+        self.assertTrue(self.q("search", "retry").startswith("app/common/retry.py:1  retry"))
+        self.assertTrue(self.q("search", "rotating", "secrets").startswith("docs/ops.md:3  Rotating secrets"))
+        self.assertIn("no keyword matches for 'zebra'", self.q("search", "zebra"))
+
+    def test_find_falls_back_to_keywords_for_concepts(self):
+        out = self.q("find", "double", "charge")
+        self.assertTrue(out.startswith("keyword matches for 'double charge' (not a symbol name):\n"
+                                       "app/payments/ledger.py:3"), out)
+        self.assertEqual(self.q("find", "settle").strip(), "app/payments/ledger.py:7")  # a name still wins
+        self.assertIn("no symbol matching 'zebra'", self.q("find", "zebra"))
+
+
+class FakeRedis:
+    """Just enough of a Redis server (RPUSH, LTRIM, LRANGE over RESP) to test the sink without one."""
+
+    def __init__(self):
+        import socketserver
+        import threading
+        lists = self.lists = {}
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                while True:
+                    head = self.rfile.readline()
+                    if not head:
+                        return
+                    words = []
+                    for _ in range(int(head[1:])):
+                        n = int(self.rfile.readline()[1:])
+                        words.append(self.rfile.read(n + 2)[:-2].decode())
+                    cmd, key, rest = words[0].upper(), words[1], words[2:]
+                    if cmd in ("SELECT", "AUTH"):
+                        self.wfile.write(b"+OK\r\n")
+                        continue
+                    items = lists.setdefault(key, [])
+                    if cmd == "RPUSH":
+                        items.extend(rest)
+                        self.wfile.write(b":%d\r\n" % len(items))
+                    elif cmd == "LTRIM":
+                        lists[key] = items[int(rest[0]):][:None if int(rest[1]) == -1 else int(rest[1]) + 1]
+                        self.wfile.write(b"+OK\r\n")
+                    elif cmd == "LRANGE":
+                        self.wfile.write(b"*%d\r\n" % len(items) + b"".join(
+                            b"$%d\r\n%s\r\n" % (len(x.encode()), x.encode()) for x in items))
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f"redis://127.0.0.1:{self.server.server_address[1]}/0"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class FakeHTTPSink:
+    """POST stores a trace, GET ?repo= lists them: the HTTP sink contract from the README."""
+
+    def __init__(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib.parse import parse_qs, urlparse
+        store = self.store = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                store.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(204)
+                self.end_headers()
+
+            def do_GET(self):
+                repo = parse_qs(urlparse(self.path).query).get("repo", [""])[0]
+                body = json.dumps([t for t in store if t["repo"] == repo]).encode()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/traces"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class SharedTraces(unittest.TestCase):
+    """CTXH_TRACE_SINK: traces go to a shared store as well, and `ctxh signals` reads it back."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.git("remote", "add", "origin", "https://user:tok@github.com/acme/shop.git")
+        self.repo.ctxh("build-index")
+        self.tp = self.repo.root / "t.jsonl"
+        transcript(self.tp, [("Read", {"file_path": str(self.repo.root / "app/common/retry.py")}),
+                             ("Bash", {"command": "make tset"})])
+        lines = self.tp.read_text().splitlines()
+        result = json.loads(lines[3])
+        result["message"]["content"][0].update(is_error=True, content="SECRET_TOKEN=abc in output")
+        lines[3] = json.dumps(result)
+        self.tp.write_text("\n".join(lines))
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def stop(self, session, sink):
+        self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": session, "transcript_path": str(self.tp)}),
+                       env={"CTXH_TRACE_SINK": sink, "CTXH_REVIEW_GATE": "0"})
+
+    def check_sink(self, sink, stored):
+        for s in ("s1", "s2", "s3"):
+            self.stop(s, sink)
+        items = stored()
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[0]["repo"], "github.com_acme_shop")  # credentials stripped from the key
+        self.assertEqual(items[0]["failed_commands"], [{"cmd": "make tset"}])  # command output never leaves
+        self.assertNotIn("SECRET_TOKEN", json.dumps(items))
+        local = json.loads((self.repo.root / ".ctx/traces/s1.json").read_text())
+        self.assertIn("SECRET_TOKEN", json.dumps(local))  # local traces are unchanged
+        for f in (self.repo.root / ".ctx/traces").glob("*.json"):
+            f.unlink()  # as if these sessions ran on teammates' machines
+        out = self.repo.ctxh("signals", env={"CTXH_TRACE_SINK": sink}).stdout
+        self.assertIn("3 traces (3 from the shared sink)", out)
+        self.assertIn("3x app/common/retry.py", out)
+        self.assertIn("3x make tset", out)
+        self.assertIn("no traces yet", self.repo.ctxh("signals").stdout)  # unset: local only, as before
+
+    def test_directory_sink(self):
+        d = Path(tempfile.mkdtemp(prefix="ctxh-sink-"))
+        try:
+            self.check_sink(str(d), lambda: [json.loads(p.read_text())
+                                             for p in sorted((d / "github.com_acme_shop").glob("*.json"))])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_http_sink(self):
+        srv = FakeHTTPSink()
+        try:
+            self.check_sink(srv.url, lambda: srv.store)
+        finally:
+            srv.close()
+
+    def test_redis_sink(self):
+        srv = FakeRedis()
+        try:
+            self.check_sink(srv.url, lambda: [json.loads(x) for x in srv.lists["ctxh:traces:github.com_acme_shop"]])
+        finally:
+            srv.close()
+
+    def test_unreachable_sink_warns_and_keeps_local(self):
+        r = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "x", "transcript_path": str(self.tp)}),
+                           env={"CTXH_TRACE_SINK": "redis://127.0.0.1:1/0", "CTXH_REVIEW_GATE": "0"})
+        self.assertIn("could not send the trace to CTXH_TRACE_SINK", r.stderr)
+        self.assertTrue((self.repo.root / ".ctx/traces/x.json").exists())
+
+
+class ToolLabels(unittest.TestCase):
+    """Metrics carry the agent that produced them; gateway logs import usage for agents without transcripts."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_metrics_are_labeled_and_stats_group_by_tool(self):
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Read", {"file_path": "app/common/retry.py"})])
+        self.repo.ctxh("usage", str(tp), "--label", "harness", "--task", "t1")
+        self.assertEqual(json.loads((self.repo.root / ".ctx/metrics/t.json").read_text())["tool"], "claude")
+        log = self.repo.root / "gateway.jsonl"
+        log.write_text("\n".join(json.dumps(x) for x in [
+            {"metadata": {"session_id": "cx-1"}, "usage": {"prompt_tokens": 1000, "completion_tokens": 50,
+                                                           "prompt_tokens_details": {"cached_tokens": 800}}},
+            {"metadata": {"session_id": "cx-1"}, "usage": {"prompt_tokens": 1200, "completion_tokens": 70}},
+            {"session_id": "cx-2", "input_tokens": 300, "output_tokens": 30, "cache_read_input_tokens": 100},
+            {"usage": {"prompt_tokens": 5}},  # no session id: skipped
+            "not json",
+        ]))
+        out = self.repo.ctxh("usage", "--gateway", str(log), "--tool", "codex", "--label", "baseline",
+                             "--task", "t1").stdout
+        self.assertIn("codex baseline t1 cx-1: 2320 tokens total (1520 uncached), 2 requests", out)
+        m = json.loads((self.repo.root / ".ctx/metrics/cx-1.json").read_text())
+        self.assertEqual((m["tool"], m["source"], m["steps"]), ("codex", "gateway", None))
+        self.assertEqual(m["tokens_main"], {"input_tokens": 1400, "output_tokens": 120,
+                                            "cache_read_input_tokens": 800, "cache_creation_input_tokens": 0})
+        stats = self.repo.ctxh("stats").stdout
+        self.assertIn("codex     baseline       2", stats)
+        self.assertIn("claude    harness        1", stats)
+        self.assertNotIn("paired tasks", stats)  # claude/harness vs codex/baseline is not a pair
+        bad = self.repo.ctxh("usage", "--gateway", str(tp), "--tool", "codex", check=False)
+        self.assertIn("carries a session id", bad.stderr)
+
+
+class ReviewRecord(unittest.TestCase):
+    """The opt-in review gate outside the agent: .ctx/reviews.json, review-check, the pre-commit hook."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+        self.repo.commit("ctx")
+        self.svc = self.repo.root / "app/orders/service.py"
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def check(self, *args):
+        return self.repo.ctxh("review-check", *args, check=False)
+
+    def test_record_then_edit_again(self):
+        self.svc.write_text(self.svc.read_text() + "# change\n")
+        (self.repo.root / "README.txt").write_text("not code\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("  app/orders/service.py", r.stdout)
+        self.assertNotIn("README.txt", r.stdout)
+        self.assertIn("1 code files", self.repo.ctxh("review-record").stdout)
+        self.assertEqual(self.check().returncode, 0)
+        self.svc.write_text(self.svc.read_text() + "# again\n")
+        self.assertEqual(self.check().returncode, 1)
+        self.assertEqual(self.repo.ctxh("review-check", env={"CTXH_REVIEW_GATE": "0"}).returncode, 0)  # off switch
+
+    def test_staged_and_base_modes_and_the_pre_commit_hook(self):
+        self.assertIn("installed .git/hooks/pre-commit", self.repo.ctxh("review-check", "--install-hook").stdout)
+        self.assertEqual(json.loads((self.repo.root / ".ctx/reviews.json").read_text()), {})
+        self.repo.git("checkout", "-q", "-b", "feature")
+        self.svc.write_text(self.svc.read_text() + "# change\n")
+        self.repo.git("add", "-A")
+        self.assertEqual(self.check("--staged").returncode, 1)
+        blocked = subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "unreviewed"],
+                                 cwd=self.repo.root, env=self.repo.env(), capture_output=True, text=True)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.repo.ctxh("review-record", "app/orders/service.py")
+        self.repo.commit("reviewed")  # passes the hook
+        self.assertEqual(self.check("--base", "main").returncode, 0)
+        self.svc.write_text(self.svc.read_text() + "# sneaky\n")
+        self.repo.git("add", "-A")
+        self.repo.git("commit", "-q", "--no-verify", "-m", "bypass")
+        r = self.check("--base", "main")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("app/orders/service.py", r.stdout)
+
+    def test_hook_refuses_to_overwrite_a_foreign_pre_commit(self):
+        hook = self.repo.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nmake lint\n")
+        r = self.repo.ctxh("review-check", "--install-hook", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\nmake lint\n")
+
+    def test_stop_hook_records_after_a_reviewer_only_when_opted_in(self):
+        self.svc.write_text(self.svc.read_text() + "# change\n")
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("Edit", {"file_path": str(self.svc)}), ("Task", {"subagent_type": "ctx-harness:reviewer"})])
+        stop = lambda sid: self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": sid, "transcript_path": str(tp)}))
+        stop("a")
+        self.assertFalse((self.repo.root / ".ctx/reviews.json").exists())  # not opted in: nothing written
+        (self.repo.root / ".ctx/reviews.json").write_text("{}\n")
+        stop("b")
+        self.assertEqual(self.check().returncode, 0)
+        transcript(tp, [("Edit", {"file_path": str(self.svc)})])  # no reviewer after the edit: no record
+        self.svc.write_text(self.svc.read_text() + "# more\n")
+        stop("c")
+        self.assertEqual(self.check().returncode, 1)
+
+
+TOY_ADAPTER = """
+import json
+from pathlib import Path
+
+NAME, LABEL = "toy", "Toy Agent"
+TOOLS = {"read": ("view",), "edit": ("str_replace_editor",), "shell": ("run",), "subagent": ("delegate",)}
+KIND_OF = {n: k for k, names in TOOLS.items() for n in names}
+
+
+def project_dir():
+    return None
+
+
+def child_env(root):
+    return {}
+
+
+def read_event(stream):
+    e = json.load(stream)
+    return {"session": e.get("id"), "transcript": Path(e["log"]) if e.get("log") else None}
+
+
+def emit_context(text):
+    print("CTX:" + text)
+
+
+def emit_block(reason):
+    print("BLOCK:" + reason)
+
+
+def read_session(path):
+    calls = []
+    for i, line in enumerate(path.read_text().splitlines()):
+        tool, arg = line.split(" ", 1)
+        calls.append({"id": str(i), "side": "main", "tool": tool, "kind": KIND_OF.get(tool), "path": arg,
+                      "command": arg, "agent": arg, "error": False, "output": ""})
+    return {"tool_version": "9", "assistant_messages": len(calls),
+            "usage": [{"side": "main", "input_tokens": 10, "output_tokens": 5}], "calls": calls}
+"""
+
+
+class Adapters(unittest.TestCase):
+    """The engine is tool-neutral: everything agent-specific comes from plugins/ctx-harness/adapters/."""
+
+    def test_core_holds_no_claude_code_specifics(self):
+        core = CTXH.read_text()
+        for needle in ("CLAUDE_", "isSidechain", "tool_use", '"decision"', '"Bash"', '"Edit"', "subagent_type"):
+            self.assertNotIn(needle, core)
+
+    def test_unknown_adapter_names_the_available_ones(self):
+        repo = Repo()
+        try:
+            r = repo.ctxh("version", env={"CTXH_TOOL": "nope"}, check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("available: claude", r.stderr)
+            self.assertIn("adapter: claude", repo.ctxh("version").stdout)
+        finally:
+            repo.cleanup()
+
+    def test_another_adapter_drives_hooks_metrics_and_gates(self):
+        repo = Repo()
+        plugin = Path(tempfile.mkdtemp(prefix="ctxh-plugin-")) / "ctx-harness"
+        try:
+            shutil.copytree(CTXH.parents[1], plugin, ignore=shutil.ignore_patterns("__pycache__"))
+            (plugin / "adapters" / "toy.py").write_text(TOY_ADAPTER)
+            python_app(repo)
+            repo.ctxh("build-index")
+            log = repo.root / "toy.log"
+            log.write_text(f"view app/orders/service.py\nstr_replace_editor {repo.root}/app/orders/service.py\n"
+                           "run ctxh q find OrderService\n")
+            run = lambda cmd, stdin="": subprocess.run(
+                [sys.executable, str(plugin / "bin" / "ctxh"), cmd], cwd=repo.root, input=stdin, text=True,
+                capture_output=True, env=repo.env({"CTXH_TOOL": "toy"}))
+            self.assertTrue(run("hook-start", "{}").stdout.startswith("CTX:"))
+            stop = run("hook-stop", json.dumps({"id": "toy1", "log": str(log)}))
+            self.assertTrue(stop.stdout.startswith("BLOCK:ctx-harness review gate"), stop.stdout + stop.stderr)
+            m = json.loads((repo.root / ".ctx" / "metrics" / "toy1.json").read_text())
+            self.assertEqual((m["tokens_total"], m["steps"], m["tool_version"]), (15, 3, "9"))
+            t = json.loads((repo.root / ".ctx" / "traces" / "toy1.json").read_text())
+            self.assertEqual(t["files_edited"], ["app/orders/service.py"])
+            self.assertEqual(t["ctx_queries"], ["ctxh q find OrderService"])
+            log.write_text(log.read_text() + "delegate ctx-harness:reviewer\n")
+            self.assertEqual(run("hook-stop", json.dumps({"id": "toy2", "log": str(log)})).stdout, "")
+        finally:
+            repo.cleanup()
+            shutil.rmtree(plugin.parent, ignore_errors=True)
+
+
+GEMINI = Path(__file__).parent / "fixtures" / "gemini"
+
+
+class GeminiAdapter(unittest.TestCase):
+    """Gemini CLI hooks (SessionStart, BeforeAgent, AfterAgent) on recorded payloads and a session log."""
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+        self.chats = Path(tempfile.mkdtemp(prefix="ctxh-gemini-")) / "chats"
+        self.log = self.chats / "session-2026-10-07T10-00-5f1c2a90.jsonl"
+        sid = json.loads((GEMINI / "session.jsonl").read_text().splitlines()[0])["sessionId"]
+        self.fill("session.jsonl", self.log)
+        self.fill("subagent.jsonl", self.chats / sid / "sub-7a1.jsonl")
+
+    def tearDown(self):
+        self.repo.cleanup()
+        shutil.rmtree(self.chats.parent, ignore_errors=True)
+
+    def fill(self, name, dest=None):
+        text = (GEMINI / name).read_text().replace("{ROOT}", str(self.repo.root)).replace("{TRANSCRIPT}", str(self.log))
+        if dest:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text)
+        return text
+
+    def hook(self, cmd, payload):
+        """Run a hook the way the settings.json block in the README does: adapter on the command line,
+        root from GEMINI_PROJECT_DIR."""
+        return self.repo.ctxh(cmd, "--tool", "gemini", stdin=self.fill(payload),
+                              env={"GEMINI_PROJECT_DIR": str(self.repo.root)})
+
+    def test_start_and_prompt_hooks_answer_with_one_json_object(self):
+        start = json.loads(self.hook("hook-start", "session-start.json").stdout)
+        self.assertIn("Working protocol", start["hookSpecificOutput"]["additionalContext"])
+        prompt = json.loads(self.hook("hook-prompt", "before-agent.json").stdout)
+        self.assertIn("run ctx-harness-reviewer", prompt["hookSpecificOutput"]["additionalContext"])
+
+    def test_stop_hook_measures_the_session_and_gates_unreviewed_edits(self):
+        stop = self.hook("hook-stop", "after-agent.json")
+        out = json.loads(stop.stdout)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("review gate", out["reason"])
+        sid = json.loads(self.fill("after-agent.json"))["session_id"]
+        m = json.loads((self.repo.root / ".ctx" / "metrics" / f"{sid}.json").read_text())
+        # 4 model turns in the main log (the rewound one was still paid for) and 1 in the subagent log;
+        # Gemini's input includes cached tokens and thoughts count as output.
+        self.assertEqual((m["tokens_total"], m["tool"]), (1300 + 1460 + 1540 + 1630 + 550, "gemini"))
+        self.assertEqual(m["tokens_main"]["cache_read_input_tokens"], 1000 + 1200 + 1400 + 1500)
+        t = json.loads((self.repo.root / ".ctx" / "traces" / f"{sid}.json").read_text())
+        self.assertEqual(t["files_edited"], ["app/orders/service.py", "notes.txt"])  # retry.py was rewound
+        self.assertEqual(t["ctx_queries"], ["ctxh q find OrderService"])
+        self.assertEqual(self.hook("hook-stop", "after-agent.json").stdout, "")  # blocks once per edit
+
+        with self.log.open("a") as f:
+            f.write(self.fill("review.jsonl"))
+        fresh = {**json.loads(self.fill("after-agent.json")), "session_id": "another-session"}
+        r = self.repo.ctxh("hook-stop", "--tool", "gemini", stdin=json.dumps(fresh),
+                           env={"GEMINI_PROJECT_DIR": str(self.repo.root)})
+        self.assertEqual(r.stdout, "")  # a new session would be blocked too, but the reviewer ran after the edit
+
+    def test_legacy_single_json_session_file(self):
+        msgs = [json.loads(l) for l in self.fill("session.jsonl").splitlines()]
+        legacy = {**msgs[0], "messages": [m for m in msgs[1:] if "id" in m and m["id"] != "g4"]}
+        self.log.write_text(json.dumps(legacy))
+        self.assertEqual(json.loads(self.hook("hook-stop", "after-agent.json").stdout)["decision"], "deny")
+        sid = msgs[0]["sessionId"]
+        m = json.loads((self.repo.root / ".ctx" / "metrics" / f"{sid}.json").read_text())
+        self.assertEqual(m["steps"], 4)
+
+
+class Prompts(unittest.TestCase):
+    """Agent and skill prompts are written once in prompts/ and generated per agent (`ctxh export`)."""
+
+    def test_claude_files_are_generated_byte_identical(self):
+        r = subprocess.run([sys.executable, str(CTXH), "export", "--tool", "claude", "--check"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_gemini_export_is_a_complete_extension(self):
+        out = Path(tempfile.mkdtemp(prefix="ctxh-gemini-ext-")) / "ctx-harness"
+        repo = Repo()
+        try:
+            subprocess.run([sys.executable, str(CTXH), "export", "--tool", "gemini", "--out", str(out)], check=True,
+                           capture_output=True)
+            manifest = json.loads((out / "gemini-extension.json").read_text())
+            self.assertEqual(manifest["name"], "ctx-harness")
+            hooks = json.loads((out / "hooks" / "hooks.json").read_text())["hooks"]
+            self.assertEqual(sorted(hooks), ["AfterAgent", "BeforeAgent", "SessionStart"])
+            self.assertIn("hook-stop --tool gemini", hooks["AfterAgent"][0]["hooks"][0]["command"])
+            agents = sorted(p.name for p in (out / "agents").iterdir())
+            self.assertEqual(agents, ["ctx-harness-card-writer.md", "ctx-harness-planner.md",
+                                      "ctx-harness-reviewer.md", "ctx-harness-scout.md"])
+            scout = (out / "agents" / "ctx-harness-scout.md").read_text()
+            self.assertIn("  - run_shell_command\n", scout)
+            self.assertIn("Targeted grep_search, then read_file", scout)
+            self.assertNotIn("write_file", scout)
+            # Manual skills become commands only; build is also a model-invocable skill.
+            self.assertEqual(sorted(p.name for p in (out / "skills").iterdir()), ["build"])
+            build = (out / "skills" / "build" / "SKILL.md").read_text()
+            self.assertIn("~/.gemini/policies/", build)
+            self.assertNotIn(".claude/settings.json", build)
+            self.assertIn("`ctx-harness-card-writer`", build)
+            try:
+                import tomllib
+            except ImportError:
+                tomllib = None
+            for name in ("build", "curate", "status"):
+                toml = (out / "commands" / "ctx-harness" / f"{name}.toml").read_text()
+                if tomllib:
+                    self.assertTrue(tomllib.loads(toml)["prompt"].startswith("#"))
+            for p in out.rglob("*"):  # protocol.md stays a source: the engine fills it at hook time
+                if p.is_file() and p.suffix in (".md", ".toml", ".json") and p.name != "protocol.md":
+                    self.assertNotIn("{{", p.read_text(), p)
+            # The extension carries its own engine, which names Gemini's agents at hook time.
+            self.assertTrue(os.access(out / "bin" / "ctxh", os.X_OK))
+            (repo.root / ".ctx").mkdir()
+            r = subprocess.run([sys.executable, str(out / "bin" / "ctxh"), "hook-prompt", "--tool", "gemini"],
+                               cwd=repo.root, input="{}", capture_output=True, text=True,
+                               env=repo.env({"GEMINI_PROJECT_DIR": str(repo.root)}))
+            ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("call ctx-harness-planner first", ctx)
+            r = subprocess.run([sys.executable, str(out / "bin" / "ctxh"), "hook-start", "--tool", "gemini"],
+                               cwd=repo.root, input="{}", capture_output=True, text=True,
+                               env=repo.env({"GEMINI_PROJECT_DIR": str(repo.root)}))
+            ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("`ctx-harness-reviewer`", ctx)
+            self.assertNotIn("{{", ctx)
+        finally:
+            repo.cleanup()
+            shutil.rmtree(out.parent, ignore_errors=True)
+
+    def test_claude_hooks_still_name_claude_agents(self):
+        repo = Repo()
+        try:
+            (repo.root / ".ctx").mkdir()
+            self.assertIn("call ctx-harness:planner first", repo.ctxh("hook-prompt", stdin="{}").stdout)
+            start = repo.ctxh("hook-start", stdin="{}").stdout
+            self.assertIn("`ctx-harness:scout`", start)
+            self.assertIn("`/ctx-harness:curate`", start)
+        finally:
+            repo.cleanup()
 
 
 if __name__ == "__main__":
