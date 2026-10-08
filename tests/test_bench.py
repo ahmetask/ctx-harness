@@ -92,6 +92,21 @@ class Materialize(unittest.TestCase):
         self.assertIn("internal/pricing/pricing.go", q("q", "impact", "internal/money/money.go"))
         self.assertIn("Dana Ortiz", q("q", "owner", "internal/orders/state.go"))
 
+    def test_committed_demo_context_is_current(self):
+        # bench/demo/ctx anchors its cards to template files; editing those files means refreshing the cards.
+        repo = materialize(self.tmp / "a")
+        shutil.copytree(ROOT / "bench" / "demo" / "ctx", repo / ".ctx")
+
+        def ctxh(*args):
+            r = subprocess.run([sys.executable, str(bench.CTXH), *args], cwd=repo, env=clean_env(),
+                               text=True, capture_output=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            return r.stdout
+
+        ctxh("check")
+        ctxh("build-index")
+        self.assertEqual(ctxh("stale").strip(), "everything fresh")
+
 
 @unittest.skipUnless(HAVE_GO, "go not installed")
 class DemoAndTasks(unittest.TestCase):

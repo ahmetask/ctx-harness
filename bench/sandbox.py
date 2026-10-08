@@ -2,8 +2,9 @@
 """A demo repo wired to this checkout's plugin, for verifying a task end to end.
 
 The unit tests use tiny throwaway repos. This gives you the shopd demo (43 Go
-files, scripted history) with `.ctx/` built by the working-tree `ctxh`, so a
-change can be tried on something realistic before it is called done.
+files, scripted history) with the committed demo context (bench/demo/ctx) as its
+`.ctx/`, indexed by the working-tree `ctxh`, so a change can be tried on
+something realistic before it is called done.
 
   python3 bench/sandbox.py                       # build (or refresh) the sandbox and run the smoke checks
   python3 bench/sandbox.py --fresh               # rebuild it from scratch
@@ -26,11 +27,12 @@ BENCH = Path(__file__).resolve().parent
 sys.path.insert(0, str(BENCH))
 sys.path.insert(0, str(BENCH / "demo"))
 
-from agents import CTXH, PLUGIN_DIR, ClaudeAgent, clean_env, fake_bootstrap, write_transcript  # noqa: E402
+from agents import CTXH, PLUGIN_DIR, ClaudeAgent, clean_env, write_transcript  # noqa: E402
 from materialize import materialize  # noqa: E402
 from run import add_harness_context, load_engine, usage_fields  # noqa: E402
 
 DEFAULT_DIR = Path(tempfile.gettempdir()) / "ctxh-sandbox"
+DEMO_CTX = BENCH / "demo" / "ctx"  # what /ctx-harness:build produced for the demo, committed
 MARKER = ".git/ctxh-sandbox"  # only directories carrying it are ever deleted
 
 
@@ -48,12 +50,8 @@ def setup(repo: Path, fresh: bool) -> Path:
     if not repo.exists():
         materialize(repo)
         (repo / MARKER).write_text("made by bench/sandbox.py\n")
-        fake_bootstrap(repo)
-        snapshot = repo.parent / f".{repo.name}-ctx"
-        shutil.rmtree(snapshot, ignore_errors=True)
-        shutil.move(repo / ".ctx", snapshot)
-        add_harness_context(repo, snapshot)  # committed, as a team that opted in would have it
-        shutil.rmtree(snapshot)
+        add_harness_context(repo, DEMO_CTX)  # committed, as a team that opted in would have it
+        ctxh(repo, "build-index")
     elif not (repo / MARKER).exists():
         sys.exit(f"{repo} exists and is not a sandbox; pick another directory")
     else:

@@ -1,0 +1,32 @@
+{
+ "ci_runs": [],
+ "commands": [
+  {
+   "cmd": "go vet ./...",
+   "exit": 0,
+   "in_ci": false,
+   "kind": "lint",
+   "seconds": 15.1,
+   "source": "go.mod",
+   "verified": true
+  },
+  {
+   "cmd": "go build ./...",
+   "exit": 0,
+   "in_ci": false,
+   "kind": "build",
+   "seconds": 0.8,
+   "source": "go.mod",
+   "verified": true
+  },
+  {
+   "cmd": "go test ./...",
+   "exit": 0,
+   "in_ci": false,
+   "kind": "test",
+   "seconds": 3.1,
+   "source": "go.mod",
+   "verified": true
+  }
+ ]
+}
