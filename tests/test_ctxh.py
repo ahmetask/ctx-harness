@@ -211,6 +211,30 @@ class CardsAndHooks(unittest.TestCase):
         self.assertRegex(self.card.read_text(), r"app/orders/service.py: [0-9a-f]{12}")
         self.assertIn("ok", self.repo.ctxh("check").stdout)
 
+    def test_ready_blocks_until_map_is_filled_then_reports_warnings(self):
+        ctx = self.repo.root / ".ctx"
+        (ctx / "map.md").write_text("Stack: python.\n| app/orders | TODO(llm) | service.py | - |\n")
+        r = self.repo.ctxh("ready", check=False)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("TODO(llm)", r.stdout)
+        self.assertIn("not ready", r.stdout)
+        (ctx / "map.md").write_text("Stack: python.\n| app/orders | orders | service.py | - |\n")
+        self.repo.ctxh("anchor", str(self.card))
+        r = self.repo.ctxh("ready", check=False)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("ready: 0 blocking", r.stdout)
+        self.assertIn("small repo", r.stdout)  # a handful of files needs no cards
+        self.assertIn(".ctx/ is not committed", r.stdout)
+
+    def test_ready_without_ctx_dir_says_how_to_start(self):
+        bare = Repo()
+        try:
+            r = bare.ctxh("ready", check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("no .ctx/", r.stdout + r.stderr)
+        finally:
+            bare.cleanup()
+
     def test_stale_after_edit(self):
         self.repo.ctxh("anchor", str(self.card))
         self.assertIn("everything fresh", self.repo.ctxh("stale").stdout)

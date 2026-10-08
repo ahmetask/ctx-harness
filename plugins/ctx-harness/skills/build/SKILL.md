@@ -22,15 +22,15 @@ Run `ctxh skeleton`, then turn `.ctx/map.draft.md` into `.ctx/map.md`:
 - Delete the draft. The map stays under 60 lines because it is injected into every session.
 
 ## 3. Cards for central modules only
-Pick the top modules by centrality, at most 5, skipping ones with fewer than about 3 source files. Invoke the `ctx-harness:card-writer` agent once per module, in parallel when possible. Smaller modules get no card; the index and the code are enough.
+Run `ctxh ready` first. It says whether the repo is too small for cards (under 15 source files: the map is enough, skip steps 3 and the probe) and lists the central modules (3+ source files) that still lack a card. Write cards for those, at most 5. Invoke the `ctx-harness:card-writer` agent once per module, in parallel when possible. Smaller modules get no card; the index and the code are enough.
 
 ## 4. Verify and prune
-- Run `ctxh check` and fix everything it reports.
-- Probe: write 5 questions a new engineer would ask about this repo whose answers you can confirm with `ctxh q` (where X is enforced, what breaks if Y changes, which tests cover Z). Ask the `ctx-harness:scout` agent each one. Wrong or low-confidence answers point to a missing or misleading card line: fix that line. Remove lines that no probe needed and that only restate code.
+- Run `ctxh ready` and fix every `FAIL` line (it includes `ctxh check`). Treat each `warn` line as a question to settle, not noise: a `.ctxignore` for fixtures, an unverified test command, an uncommitted `.ctx/`.
+- Probe, only if you wrote cards: write 3 questions a new engineer would ask about this repo whose answers you can confirm with `ctxh q` (where X is enforced, what breaks if Y changes, which tests cover Z). Ask the `ctx-harness:scout` agent each one. Wrong or low-confidence answers point to a missing or misleading card line: fix that line. Remove lines that no probe needed and that only restate code.
 
 ## 5. Permissions and sharing
 - If `.claude/settings.json` does not allow `Bash(ctxh *)`, offer to add it under `permissions.allow`, so agents can query the index without an approval prompt each time.
 - `.ctx/.gitignore` already excludes derived and per-machine files (graph.json, tmp, traces, metrics). Suggest committing the rest of `.ctx/` so the whole team shares the context. Do not commit unless the user asks.
 
 ## 6. Report
-Summarize: files indexed, verified commands, map line count, cards written, probe results, anything left unverified.
+Summarize with the final `ctxh ready` output: files indexed, verified commands, map line count, cards written, probe results, anything left unverified.
