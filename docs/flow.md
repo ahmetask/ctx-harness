@@ -58,14 +58,14 @@ sequenceDiagram
     U->>CC: prompt
     CC->>X: hook-prompt
     X-->>C: reminder: plan for 3+ files, review before finishing
-    opt 3+ files or unclear scope
-        C->>+P: plan this
+    opt 3+ files, scope or design open (a fully specified request: the coder writes the plan itself)
+        C->>+P: plan this (foreground)
         P->>X: q impact / cochange / tests
         X-->>P: affected files + co-change partners
         P->>F: write tasks/active.md
         P-->>-C: what, why, acceptance criteria
-        C-->>U: plan, waiting for approval
-        U->>C: approved
+        C-->>U: plan, waiting for approval only on choices the request left open
+        U->>C: decided
     end
 ```
 

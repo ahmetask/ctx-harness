@@ -43,7 +43,7 @@ Requirements: Claude Code, git, and Python 3.10+ on macOS or Linux. The engine u
 |---|---|---|
 | Coder | your main session | The only agent that edits files. Follows `protocol.md`, which a hook injects at session start |
 | Scout | `ctx-harness:scout` (Haiku) | Read-only lookups that return a few lines with `file:line`, so the coder's context stays clean |
-| Planner | `ctx-harness:planner` | For changes touching 3+ files: writes `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps). The coder waits for your approval |
+| Planner | `ctx-harness:planner` | For 3+ file changes whose scope or design is open: writes `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps). When the request already says what to change, the coder writes a short plan itself. It waits for your approval only on choices the request left open |
 | Reviewer | `ctx-harness:reviewer` | Reviews the diff with a fresh context, never the coder's reasoning. Also reports context the change made outdated |
 | Card-writer | `ctx-harness:card-writer` (Haiku) | Writes one module card, used by build and curate |
 | Build | `/ctx-harness:build` | Bootstraps `.ctx/` from zero |
@@ -67,7 +67,7 @@ Step-by-step sequence diagrams are in [docs/flow.md](docs/flow.md).
 **Hooks** (they run automatically, and only in repos that have `.ctx/`):
 
 - **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index. It runs again after the conversation is compacted (and on `--resume`). When a plan is active, the injection then names the plan and repeats the last 8 entries of its progress log, so the agent picks up where it left off instead of re-planning.
-- **UserPromptSubmit:** a one-line reminder of the two rules agents skip most often: plan for 3+ files, and review before finishing.
+- **UserPromptSubmit:** a one-line reminder of the two rules agents skip most often: plan for 3+ files, and review before finishing. In Claude Code it also says to run subagents in the foreground, so the coder waits for the plan or review instead of redoing the work or polling for it.
 - **Stop:** records tokens, steps, files read and edited, failed commands and empty index queries. If code changed since the last reviewer run, it blocks finishing once and asks for a review. It blocks only once per edit, so it can't loop.
 
 In a repo without `.ctx/`, the hooks print a one-line hint and write nothing.

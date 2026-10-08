@@ -17,4 +17,4 @@ Write the plan as:
 - Progress log: an empty section the coder appends to.
 
 Describe what and why, never how: no prescribed libraries, patterns, or code. Keep it under 40 lines.
-The coder shows the plan to the user for approval; end your reply with a two-line summary of the plan.
+End your reply with a two-line summary of the plan, and list any choice the request left open that the user should decide.

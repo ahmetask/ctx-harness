@@ -50,7 +50,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -1609,7 +1609,7 @@ This repo keeps compact, maintained context in `.ctx/`. Use it before exploring:
 - Start with `.ctx/map.md` (stack, modules, verified commands, fragile files). If `.ctx/tasks/active.md` exists, read it and continue from its progress log.
 - Ask the index before grep: `ctxh q find <symbol>`, `ctxh q rdeps|impact|cochange|tests|owner <file>`, `ctxh q module <file>`. Only the answer enters your context. Grep and read targeted ranges only when the index has no answer.
 - Before changing a module, read its card, `.ctx/cards/<module-with-dashes>.md`, and only that one. Gotchas from past tasks are in `.ctx/learned.md`.
-- Changing 3+ files, or the scope is unclear: write a plan to `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps, progress log) and get the user's approval before coding. Append to the progress log after each step.
+- Changing 3+ files, or the scope is unclear: write a plan to `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps, progress log) before coding. Ask the user to approve it only when it makes a choice the request left open. Append to the progress log after each step.
 - Validate with the verified commands listed in the map.
 - Before finishing: review your own diff as a stranger would, run `ctxh stale`, and tell the user which cards are stale. Move the finished plan to `.ctx/tasks/done/`.
 - `.ctx/map.md`, `.ctx/cards/` and `.ctx/learned.md` are maintained by the curation step, not edited during a task.
@@ -1807,9 +1807,11 @@ def cmd_hook_prompt(_):
     ADAPTER.read_event(sys.stdin)
     if env("DISABLED") == "1" or not opted_in():
         return
-    lines = [render_prompt("ctx-harness: if this request means changing 3+ files, call {{agent:planner}} first and wait "
-                           "for the user's approval, however detailed the request is. Before finishing any code change, "
-                           "run {{agent:reviewer}}, then `ctxh stale`.")]
+    lines = [render_prompt("ctx-harness: if this request means changing 3+ files and leaves the scope or design open, "
+                           "call {{agent:planner}} first; if it already says what to change, write a short plan to "
+                           "`.ctx/tasks/active.md` yourself. Before finishing any code change, run {{agent:reviewer}}, "
+                           "then `ctxh stale`.\n{{only:claude}}Run subagents in the foreground "
+                           "(`run_in_background: false`) and wait for their answer.").rstrip("\n")]
     active = CTX / "tasks" / "active.md"
     if active.exists() and active.read_text().strip():
         lines.append("Active plan: .ctx/tasks/active.md")
@@ -1821,7 +1823,8 @@ def session_edits(path: Path):
 
     files: distinct repo-relative code files edited, in the order first touched.
     last_edit: id of the last code edit's tool call (what both gates key their block-once state on).
-    reviewed_after: a reviewer subagent ran after that edit. planner: a planner subagent ran at all.
+    reviewed_after: a reviewer subagent ran after that edit. planner: a planner subagent ran, or the
+    session wrote .ctx/tasks/active.md itself (that plan may be filed under done/ by the time it stops).
     """
     info = {"files": [], "last_edit": None, "reviewed_after": False, "planner": False}
     trace = ADAPTER.read_session(path)
@@ -1831,7 +1834,9 @@ def session_edits(path: Path):
         if call["kind"] == "edit":
             f = call["path"]
             rel = os.path.relpath(f, ROOT) if os.path.isabs(f) else f
-            if f and not rel.startswith((".ctx", "..")) and lang_of(rel):
+            if rel == os.path.join(".ctx", "tasks", "active.md"):
+                info["planner"] = True
+            elif f and not rel.startswith((".ctx", "..")) and lang_of(rel):
                 info["last_edit"], info["reviewed_after"] = call["id"], False
                 if rel not in info["files"]:
                     info["files"].append(rel)
@@ -1860,9 +1865,9 @@ def plan_gate_reason(info):
     shown = ", ".join(info["files"][:3])
     return (f"ctx-harness plan gate: {len(info['files'])} code files changed in this session ({shown}"
             f"{', ...' if len(info['files']) > 3 else ''}) and there is no plan in .ctx/tasks/active.md. "
-            + render_prompt("Call {{agent:planner}} on what you have done and what is left, show the plan to the "
-                            "user, and keep working from it. If the user explicitly said to skip planning, say so "
-                            "and finish."))
+            + render_prompt("Write the plan to `.ctx/tasks/active.md` (call {{agent:planner}} when the scope "
+                            "was open) covering what you have done and what is left, and keep working from it. "
+                            "If the user explicitly said to skip planning, say so and finish."))
 
 
 def gate_once(session, key, value):
