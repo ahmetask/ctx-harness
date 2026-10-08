@@ -1,5 +1,36 @@
 # Benchmark results
 
+## Four arms, 2026-10-08: baseline, Graphify, harness, harness + Graphify
+
+Same protocol as the rerun below (t1, t2, t4 × 3 repeats, harness 0.4.0 with gates off and the committed `bench/demo/ctx`), now with four arms. 36 sessions, about $4.83 in total, model `claude-sonnet-5-5`, Claude Code 2.1.294, Graphify 0.9.80 (PyPI `graphifyy`). All 36 passed their hidden checks and the regression suite.
+
+- **Graphify setup.** As its docs describe for Claude Code: `graphify update .` (AST-only graph, no LLM, about 1s, 291 nodes on the demo repo) and `graphify claude install` (a `CLAUDE.md` section plus `PreToolUse` hooks that steer search and reads to `graphify query`). I did not run the `/graphify` skill, whose semantic pass uses the model. A live session confirmed the agent calls `graphify query` first.
+- Command: `python3 bench/run.py --agent claude --tasks t1,t2,t4 --repeats 3 --modes baseline,graphify,harness,harness+graphify --ctx-from bench/demo/ctx`.
+
+Totals over the 9 runs per arm (all passed, so cost per pass is cost / 9):
+
+| arm | total tokens | uncached | steps | wall time | billed cost | per passing task |
+|---|---|---|---|---|---|---|
+| baseline | 2.13M | 168.6k | 53 | 259s | $1.19 | $0.132 |
+| baseline + Graphify | 2.42M (+14%) | 184.9k (+10%) | 45 | 272s (+5%) | $1.30 (+9%) | $0.144 |
+| harness | 2.05M (-4%) | 174.0k (+3%) | 38 | 253s (-2%) | $1.18 (-1%) | $0.131 |
+| harness + Graphify | 1.83M (-14%) | 180.6k (+7%) | 32 | 219s (-15%) | $1.16 (-3%) | $0.129 |
+
+Medians per task (tokens, steps, time):
+
+| task | baseline | + Graphify | harness | harness + Graphify |
+|---|---|---|---|---|
+| t1 locate | 159.5k, 4, 16s | 161.6k, 3, 25s | 123.7k, 3, 12s | 124.4k, 2, 14s |
+| t2 bugfix | 292.4k, 9, 37s | 349.1k, 7, 32s | 175.0k, 3, 27s | 178.5k, 3, 26s |
+| t4 cross-module | 270.0k, 5, 37s | 341.0k, 6, 39s | 386.6k, 7, 38s | 288.9k, 5, 34s |
+
+What this shows:
+- **Graphify alone did not help on this repo.** It cut steps (53 → 45) but cost more tokens, time and money. Its query output is large (the t1 query returned 83 nodes, truncated), and the agent still read the files afterwards. A 43-file repo is small enough that grep is already cheap.
+- **The harness on its own is about break-even on cost** (-1%) and saves tokens mainly through fewer steps. Uncached tokens are slightly higher in every arm that adds context.
+- **The best arm was harness + Graphify**, mostly because of t4 (289k vs 387k for the harness alone). I would not read that as synergy: t4 harness runs were 383–387k in all three repeats here, but 184k–333k in the earlier rerun (which gave -10% on cost overall). t4 is the noisy task, and the 9-run arms differ by single-digit percent on cost.
+- **Differences of a few percent in cost, time or uncached tokens are inside run-to-run noise** at 3 repeats per cell. The solid findings are Graphify-alone being worse than baseline (consistent on t2 and t4) and the harness saving 22–40% of tokens on t1 and t2.
+- Limits: one small repo, three tasks, Graphify's AST graph only (no semantic extraction, no wiki, no MCP server).
+
 ## Rerun, 2026-10-08: lean default flow (plugin 0.4.0)
 
 After the pilot below, the harness still cost more than the baseline on t4: 80k uncached tokens vs 28k, and 86s vs 37s. The cause was not the context (the map and card are about 1.5k tokens). It was the planner and reviewer subagents, plus the turns the plan and review gates forced. 0.4.0 makes both gates and both subagents opt-in, and keeps the protocol to working from the map and the module card.
