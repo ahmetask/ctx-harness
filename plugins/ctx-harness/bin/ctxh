@@ -1149,7 +1149,12 @@ def cmd_card_draft(args):
     body = ["TODO(llm) one line on what the module owns.", "", "## Invariants",
             "- TODO(llm) rules that hold in code, each naming the symbol that enforces it (read only the top files:"
             f" {', '.join(f.rsplit('/', 1)[-1] for f in mine[:3])}).", ""]
-    hist = [f"- `{f}`: {r}" for f in mine for r in files[f].get("risk", [])][:6]
+    seen, hist = set(), []
+    for f in mine:  # one commit touching several files is one line
+        for r in files[f].get("risk", []):
+            if r not in seen and len(hist) < 6:
+                seen.add(r)
+                hist.append(f"- `{f}`: {r}")
     coupled = []
     for f in mine:
         for other, c in files[f].get("cochange", []):
