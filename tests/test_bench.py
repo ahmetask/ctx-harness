@@ -174,6 +174,19 @@ class EndToEnd(unittest.TestCase):
         for heading in ("## Overall", "## Per task", "## By category", "## Harness overhead", "synthetic"):
             self.assertIn(heading, report)
 
+    def test_four_arms_with_graphify_modes_report_each(self):
+        run_dir = bench.main(["--agent", "fake", "--tasks", "t1", "--repeats", "1", "--ctx-from",
+                              str(bench.BENCH / "demo" / "ctx"), "--out", str(self.out),
+                              "--modes", "baseline,graphify,harness,harness+graphify"])
+        rows = self.rows(run_dir)
+        self.assertEqual({r["mode"] for r in rows}, {"baseline", "graphify", "harness", "harness+graphify"})
+        self.assertTrue(all(r["passed"] for r in rows))
+        report = (run_dir / "report.md").read_text()
+        self.assertIn("| harness+graphify |", report)
+        self.assertIn("cost per pass", report)
+        with self.assertRaises(SystemExit):
+            bench.main(["--agent", "fake", "--modes", "graphify,bogus", "--out", str(self.out)])
+
     def test_claude_agent_invocation_with_stub_cli(self):
         """Drive the real-agent path against a stub `claude` that logs its argv and env."""
         bin_dir, config = self.out / "bin", self.out / "claude-config"

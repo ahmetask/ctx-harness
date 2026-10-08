@@ -39,6 +39,11 @@ Modes:
 
 In both modes the prompt ends with a note that the run is non-interactive and any plan counts as approved. Without it, the harness protocol would wait for plan approval that never comes. The harness arm runs with the plugin's defaults (plan and review gates off); `--gates` turns both Stop-hook gates on, to measure what they cost. Each real run is killed after `--timeout` seconds (default 3600). `--max-turns` also passes each task's `max_turns` to `claude --max-turns`, if your CLI supports it.
 
+Optional Graphify arms (`--modes baseline,graphify,harness,harness+graphify`):
+- **graphify:** the baseline plus [Graphify](https://github.com/Graphify-Labs/graphify) as its docs set it up for Claude Code. Each run's fresh repo gets `graphify update .` (AST-only, no LLM, about a second) and `graphify claude install` (a `CLAUDE.md` section and `PreToolUse` hooks that point the agent at `graphify query`), committed before the agent starts. The plugin stays off.
+- **harness+graphify:** the harness mode with the same Graphify setup on top.
+- Install the CLI from PyPI with `pip install graphifyy` (double y; other `graphify*` packages are unrelated) or pass `--graphify-bin`. The graphify version goes into `run.json`. The semantic (LLM) pass of `/graphify` is not used, so Graphify costs no tokens to build.
+
 Real runs use `--permission-mode acceptEdits` and allow `Bash`, so the agent can run `go test` and `ctxh`. Each run happens in a throwaway directory under the system temp dir. Pass `--keep` to keep the per-run repos for inspection.
 
 ## Agents

@@ -62,8 +62,10 @@ def ctxh(repo: Path, *args, check=True):
 class ClaudeAgent:
     name = "claude"
 
-    def __init__(self, model=None, gates=False, max_turns=False, claude_bin="claude", timeout=3600):
+    def __init__(self, model=None, gates=False, max_turns=False, claude_bin="claude", timeout=3600,
+                 graphify_bin=None):
         self.model, self.gates, self.bin, self.timeout = model, gates, claude_bin, timeout
+        self.graphify_bin = graphify_bin  # path of the graphify CLI; its directory goes on PATH in graphify modes
         self.max_turns = max_turns  # pass each task's turn limit as --max-turns (not every CLI build lists it)
         if not shutil.which(claude_bin):
             raise SystemExit(f"'{claude_bin}' not found on PATH; install Claude Code or use --agent fake")
@@ -82,7 +84,9 @@ class ClaudeAgent:
         if self.model:
             cmd += ["--model", self.model]
         env = clean_env(CTXH_TASK=label)
-        if mode in ("harness", "bootstrap"):
+        if self.graphify_bin and "graphify" in mode:  # the agent queries the graph through the CLI
+            env["PATH"] = f"{Path(self.graphify_bin).parent}{os.pathsep}{env.get('PATH', '')}"
+        if mode in ("harness", "harness+graphify", "bootstrap"):
             cmd += ["--plugin-dir", str(PLUGIN_DIR)]
             env["PATH"] = f"{PLUGIN_DIR / 'bin'}{os.pathsep}{env.get('PATH', '')}"
             if self.gates:  # the plan and review gates are opt-in
@@ -195,7 +199,12 @@ class FakeAgent:
                 shutil.copyfile(src, repo / rel)
                 touched.append(rel.as_posix())
         size = 1 + len(touched)
-        if mode == "harness":
+        sub = []
+        if mode == "graphify":
+            calls = [("Bash", {"command": f"graphify query {task.id.split('-')[1]}"})]
+            calls += [("Read", {"file_path": str(repo / f)}) for f in touched[:3]]
+            tokens = (int(24_000 * size ** 0.5), 1_600)
+        elif "harness" in mode:
             calls = [("Bash", {"command": f"ctxh q find {task.id.split('-')[1]}"})]
             calls += [("Read", {"file_path": str(repo / f)}) for f in touched[:2]]
             sub = [("Bash", {"command": "git diff HEAD"}), ("Read", {"file_path": str(repo / "go.mod")})]
@@ -205,7 +214,6 @@ class FakeAgent:
             calls = [("Grep", {"pattern": task.id.split("-")[1]}), ("Bash", {"command": "ls -R internal"})]
             calls += [("Read", {"file_path": str(repo / f)}) for f in
                       ["internal/orders/service.go", "internal/app/app.go", *touched]]
-            sub = []
             tokens = (int(26_000 * size ** 0.5), 1_800)
         calls += [("Edit", {"file_path": str(repo / f)}) for f in touched]
         calls += [("Bash", {"command": "go test ./..."})] * rng.randint(1, 3)
@@ -219,9 +227,10 @@ class NoopAgent(FakeAgent):
     apply_solution = False
 
 
-def make_agent(name, model=None, gates=False, max_turns=False, timeout=3600):
+def make_agent(name, model=None, gates=False, max_turns=False, timeout=3600, graphify_bin=None):
     if name == "claude":
-        return ClaudeAgent(model=model, gates=gates, max_turns=max_turns, timeout=timeout)
+        return ClaudeAgent(model=model, gates=gates, max_turns=max_turns, timeout=timeout,
+                           graphify_bin=graphify_bin)
     if name == "fake":
         return FakeAgent()
     if name == "noop":

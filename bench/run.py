@@ -17,6 +17,7 @@ import argparse
 import importlib.machinery
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,8 @@ from materialize import materialize  # noqa: E402
 TASKS_DIR = BENCH / "tasks"
 REGRESSION = ["go", "test", "-count=1", "./..."]  # every run must also leave the whole suite green
 MODES = ("harness", "baseline")
+ALL_MODES = ("baseline", "graphify", "harness", "harness+graphify")  # --modes accepts any subset
+GRAPHIFY_MODES = ("graphify", "harness+graphify")
 
 
 @dataclass
@@ -124,6 +127,27 @@ def add_harness_context(repo: Path, snapshot: Path):
                     "commit", "-q", "-m", "add harness context"], cwd=repo, check=True, capture_output=True)
 
 
+def add_graphify(repo: Path, gbin: str):
+    """Set the repo up the way `graphify` documents for Claude Code: AST-only graph, CLAUDE.md section, PreToolUse hooks.
+
+    `graphify update` is AST-only: no LLM and no API cost, about a second on the demo repo.
+    """
+    env = clean_env(PATH=f"{Path(gbin).parent}{os.pathsep}{os.environ.get('PATH', '')}")
+    for args in (["update", "."], ["claude", "install"]):
+        r = subprocess.run([gbin, *args], cwd=repo, env=env, text=True, capture_output=True, timeout=600)
+        if r.returncode != 0:
+            raise SystemExit(f"graphify {' '.join(args)} failed: {(r.stderr or r.stdout)[-500:]}")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "user.name=bench", "-c", "user.email=bench@example.com",
+                    "commit", "-q", "-m", "add graphify graph"], cwd=repo, check=True, capture_output=True)
+
+def graphify_version(gbin):
+    if not gbin:
+        return None
+    r = subprocess.run([gbin, "--version"], capture_output=True, text=True)
+    return r.stdout.strip() or "unknown"
+
+
 def snapshot_ctx(repo: Path, dest: Path):
     shutil.copytree(repo / ".ctx", dest, ignore=shutil.ignore_patterns("tmp", "traces", "metrics"))
 
@@ -133,7 +157,9 @@ def main(argv=None):
     ap.add_argument("--agent", default="fake", help="claude | fake | noop (default: fake)")
     ap.add_argument("--tasks", help="comma-separated task ids or prefixes such as t2,t4 (default: all)")
     ap.add_argument("--repeats", type=int, default=3)
-    ap.add_argument("--modes", default=",".join(MODES), help="harness,baseline (default: both)")
+    ap.add_argument("--modes", default=",".join(MODES),
+                    help=f"any of {','.join(ALL_MODES)} (default: harness,baseline)")
+    ap.add_argument("--graphify-bin", help="path to the graphify CLI (default: found on PATH); PyPI package graphifyy")
     ap.add_argument("--model", help="model passed to claude --model")
     ap.add_argument("--gates", action="store_true", help="turn the opt-in plan and review gates on for harness runs")
     ap.add_argument("--max-turns", action="store_true", help="pass each task's max_turns to claude --max-turns")
@@ -144,13 +170,18 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     modes = [m for m in args.modes.split(",") if m]
-    if not set(modes) <= set(MODES):
-        raise SystemExit(f"--modes must be a subset of {','.join(MODES)}")
+    if not set(modes) <= set(ALL_MODES):
+        raise SystemExit(f"--modes must be a subset of {','.join(ALL_MODES)}")
+    gbin = None
+    if args.agent == "claude" and set(modes) & set(GRAPHIFY_MODES):
+        gbin = args.graphify_bin or shutil.which("graphify")
+        if not gbin:
+            raise SystemExit("graphify modes need the graphify CLI: pip install graphifyy, or pass --graphify-bin")
     if not shutil.which("go"):
         raise SystemExit("go is required to run the demo repo's checks")
     tasks = load_tasks(args.tasks)
     agent = make_agent(args.agent, model=args.model, gates=args.gates,
-                       max_turns=args.max_turns, timeout=args.timeout)
+                       max_turns=args.max_turns, timeout=args.timeout, graphify_bin=gbin)
     engine = load_engine()
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + f"-{agent.name}"
@@ -163,7 +194,7 @@ def main(argv=None):
     work = Path(tempfile.mkdtemp(prefix="ctxh-bench-"))
     scratch = run_dir / "transcripts"
     meta = {"run": run_id, "agent": agent.name, "model": args.model, "repeats": args.repeats, "modes": modes,
-            "tasks": [t.id for t in tasks], "gates": args.gates,
+            "tasks": [t.id for t in tasks], "gates": args.gates, "graphify": graphify_version(gbin),
             "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "synthetic": agent.name != "claude"}
     (run_dir / "run.json").write_text(json.dumps(meta, indent=1))
     results = run_dir / "results.jsonl"
@@ -178,7 +209,7 @@ def main(argv=None):
 
     print(f"benchmark {run_id}: {len(tasks)} tasks x {len(modes)} modes x {args.repeats} repeats -> {run_dir}")
     snapshot = None
-    if "harness" in modes:
+    if "harness" in modes or "harness+graphify" in modes:
         if args.ctx_from:
             snapshot = Path(args.ctx_from).resolve()
             meta["ctx_from"] = str(snapshot)
@@ -204,8 +235,10 @@ def main(argv=None):
             order = modes if (repeat + i) % 2 == 0 else modes[::-1]  # alternate who goes first
             for mode in order:
                 repo = materialize(work / f"{task.id}-{mode}-{repeat}")
-                if mode == "harness":
+                if "harness" in mode:
                     add_harness_context(repo, snapshot)
+                if gbin and mode in GRAPHIFY_MODES:
+                    add_graphify(repo, gbin)
                 res = agent.run(repo, task, mode, repeat, scratch)
                 keep_transcript(res, scratch / f"{task.id}-{mode}-{repeat}.jsonl")
                 passed, why = run_check(repo, task)

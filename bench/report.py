@@ -45,6 +45,7 @@ def summarize(rows):
         uncached = [r["tokens_uncached"] for r in rs if r.get("tokens_uncached") is not None]
         steps = [r["steps"] for r in rs if r.get("steps") is not None]
         costs = [r["cost_usd"] for r in rs if r.get("cost_usd") is not None]
+        secs = [r["seconds"] for r in rs if r.get("seconds") is not None]
         passes = sum(1 for r in rs if r["passed"])
         q1, med, q3 = quartiles(tokens)
         stats[key] = {
@@ -53,7 +54,7 @@ def summarize(rows):
             "median_uncached": statistics.median(uncached) if uncached else None,
             "median_steps": statistics.median(steps) if steps else None,
             "tokens_per_pass": (sum(tokens) / passes) if passes and tokens else None,
-            "cost": sum(costs) if costs else None,
+            "cost": sum(costs) if costs else None, "median_seconds": statistics.median(secs) if secs else None,
         }
     return stats
 
@@ -62,7 +63,7 @@ def render(meta, rows):
     stats = summarize(rows)
     work = [r for r in rows if r["mode"] != "bootstrap"]
     tasks = sorted({r["task"] for r in work})
-    modes = [m for m in ("harness", "baseline") if any(r["mode"] == m for r in work)]
+    modes = [m for m in ("baseline", "graphify", "harness", "harness+graphify") if any(r["mode"] == m for r in work)]
     L = [f"# Benchmark {meta.get('run', '')}", ""]
     L.append(f"Agent: {meta.get('agent', '?')}" + (f" (model {meta['model']})" if meta.get("model") else "")
              + f" · tasks: {len(tasks)} · repeats: {meta.get('repeats', '?')}"
@@ -72,7 +73,7 @@ def render(meta, rows):
                   "not the harness."]
 
     L += ["", "## Overall", "", "| mode | runs | pass rate | median tokens | median uncached | median steps "
-                                "| tokens per pass | cost |", "|---|---|---|---|---|---|---|---|"]
+                                "| tokens per pass | median time | cost | cost per pass |", "|---|---|---|---|---|---|---|---|---|---|"]
     for m in modes:
         rs = [r for r in work if r["mode"] == m]
         tok = [r["tokens_total"] for r in rs if r.get("tokens_total") is not None]
@@ -80,13 +81,16 @@ def render(meta, rows):
         st = [r["steps"] for r in rs if r.get("steps") is not None]
         costs = [r["cost_usd"] for r in rs if r.get("cost_usd") is not None]
         passes = sum(r["passed"] for r in rs)
+        secs = [r["seconds"] for r in rs if r.get("seconds") is not None]
         L.append(f"| {m} | {len(rs)} | {passes / len(rs):.0%} | {k(statistics.median(tok) if tok else None)} | "
                  f"{k(statistics.median(unc) if unc else None)} | {statistics.median(st) if st else '-'} | "
                  f"{k(sum(tok) / passes) if passes and tok else '-'} | "
-                 f"{f'${sum(costs):.2f}' if costs else '-'} |")
+                 f"{statistics.median(secs):.0f}s | "
+                 f"{f'${sum(costs):.2f}' if costs else '-'} | "
+                 f"{f'${sum(costs) / passes:.3f}' if costs and passes else '-'} |")
 
     L += ["", "## Per task", "", "| task | category | mode | pass | median tokens (IQR) | uncached | steps "
-                                 "| Δ tokens vs baseline |", "|---|---|---|---|---|---|---|---|"]
+                                 "| time | Δ tokens vs baseline |", "|---|---|---|---|---|---|---|---|---|"]
     deltas = {}
     for t in tasks:
         base = stats.get((t, "baseline"), {}).get("median")
@@ -95,24 +99,27 @@ def render(meta, rows):
             if not s:
                 continue
             delta = ""
-            if m == "harness" and base and s["median"] is not None:
-                deltas[t] = (s["median"] - base, (s["median"] - base) / base, s["category"])
-                delta = f"{deltas[t][1]:+.0%}"
+            if m != "baseline" and base and s["median"] is not None:
+                d = (s["median"] - base, (s["median"] - base) / base, s["category"])
+                deltas[(t, m)] = d
+                delta = f"{d[1]:+.0%}"
             iqr = f"{k(s['median'])} ({k(s['q1'])}–{k(s['q3'])})" if s["median"] is not None else "-"
             L.append(f"| {t} | {s['category']} | {m} | {s['passes']}/{s['runs']} | {iqr} | "
                      f"{k(s['median_uncached'])} | {s['median_steps'] if s['median_steps'] is not None else '-'} "
-                     f"| {delta} |")
+                     f"| {s['median_seconds']:.0f}s | {delta} |")
 
     cats = sorted({r["category"] for r in work})
-    if len(modes) == 2:
-        L += ["", "## By category", "", "| category | harness pass | baseline pass | median Δ tokens |",
-              "|---|---|---|---|"]
+    if len(modes) > 1:
+        L += ["", "## By category", "", "| category | " + " | ".join(f"{m} pass" for m in modes)
+              + " | median Δ tokens vs baseline |", "|---|" + "---|" * len(modes) + "---|"]
         for c in cats:
             pr = {m: [r["passed"] for r in work if r["category"] == c and r["mode"] == m] for m in modes}
-            ds = [d[1] for t, d in deltas.items() if d[2] == c]
-            L.append(f"| {c} | {sum(pr['harness'])}/{len(pr['harness'])} | "
-                     f"{sum(pr['baseline'])}/{len(pr['baseline'])} | "
-                     f"{f'{statistics.median(ds):+.0%}' if ds else '-'} |")
+            ds = []
+            for m in modes[1:] if modes[0] == "baseline" else []:
+                v = [d[1] for (t, mm), d in deltas.items() if mm == m and d[2] == c]
+                ds.append(f"{m} {statistics.median(v):+.0%}" if v else "")
+            L.append(f"| {c} | " + " | ".join(f"{sum(pr[m])}/{len(pr[m])}" for m in modes)
+                     + f" | {', '.join(x for x in ds if x) or '-'} |")
 
     boot = [r for r in rows if r["mode"] == "bootstrap"]
     if boot or meta.get("ctx_from"):
@@ -122,8 +129,9 @@ def render(meta, rows):
             cost = f", ${b['cost_usd']:.2f}" if b.get("cost_usd") is not None else ""
             L.append(f"- Bootstrap (`/ctx-harness:build`, once per repo): {k(b.get('tokens_total'))} tokens{cost}, "
                      f"{b['seconds']:.0f}s.")
-            if deltas:
-                saving = -statistics.mean(d[0] for d in deltas.values())
+            hd = [d for (t, m), d in deltas.items() if m == "harness"]
+            if hd:
+                saving = -statistics.mean(d[0] for d in hd)
                 if saving > 0 and b.get("tokens_total"):
                     L.append(f"- Mean saving per task (paired medians): {k(saving)} tokens; "
                              f"break-even after ~{b['tokens_total'] / saving:.1f} tasks.")
