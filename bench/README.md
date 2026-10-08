@@ -57,6 +57,8 @@ Real runs use `--permission-mode acceptEdits` and allow `Bash`, so the agent can
 - co-change with no import link: `internal/orders/state.go` ↔ `internal/notify/templates.go`
 - owners per file
 
+`demo/ctx/` is the demo's `.ctx/` as `/ctx-harness:build` produces it: the deterministic index output, a filled-in map and cards for the five central modules (orders, pricing, payments, money, httpapi). `sandbox.py` installs it in every sandbox, and `python3 bench/run.py --ctx-from bench/demo/ctx` uses it instead of paying for a bootstrap session. Its cards are anchored to template files, so `tests/test_bench.py` fails when an edit leaves them stale; refresh them by re-running the build in a sandbox and copying `.ctx/` back without `graph.json`.
+
 To change the demo, edit `template/` (the final state). If an edit touches text that a `HISTORY` entry in `materialize.py` mentions, update that entry too. `tests/test_bench.py` checks that the history replays exactly to the template.
 
 ## Tasks
