@@ -13,6 +13,7 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh anchor <card.md>         stamp a card with hashes of the files it describes
   ctxh stale                    what changed since cards / index were built
   ctxh check                    enforce budgets and catch dead paths in map, cards, learned
+  ctxh ready                    one verdict: is this repo's context usable (blocking vs warnings)
   ctxh signals                  aggregate agent traces into promotion candidates (curator input)
   ctxh usage <transcript> [--label L] [--task T]   tokens/steps of any agent session
   ctxh stats                    harness vs baseline comparison
@@ -38,7 +39,9 @@ Environment:
   CTXH_TRACE_SINK=<dir | http(s)://url | redis://host[:port][/db]>   also send traces there; signals reads it
   CTXH_TRACE_REPO=<name>   repo key in the shared sink (default: origin URL)
 """
+import contextlib
 import hashlib
+import io
 import math
 import importlib
 import importlib.util
@@ -1224,6 +1227,109 @@ def cmd_check(_):
     sys.exit(1 if problems else 0)
 
 
+# ---------------------------------------------------------------- readiness
+FIXTURE_DIRS = {"demo", "demos", "fixture", "fixtures", "testdata", "example", "examples", "sample", "samples",
+                "vendor", "third_party", "thirdparty"}
+SMALL_REPO_FILES = 15  # below this, two `cat`s load the whole repo: cards and probes cost more than they save
+
+
+def card_candidates(g, limit=5):
+    """The most central modules with 3+ source files, and those among them that have no card yet."""
+    src = Counter(n["module"] for n in g["files"].values() if n["role"] == "src")
+    have = {parse_card(c.read_text())[0].get("module") for c in CARDS.glob("*.md")} if CARDS.exists() else set()
+    ranked = sorted((m for m in src if src[m] >= 3), key=lambda m: -g["modules"][m]["rank"])[:limit]
+    return [m for m in ranked if m not in have], ranked
+
+
+def fixture_share(g):
+    """(directory, share of source files) of the biggest fixture-looking directory, if any."""
+    src = [f for f, n in g["files"].items() if n["role"] == "src"]
+    dirs = Counter()
+    for f in src:
+        parts = f.split("/")[:-1]
+        for i, part in enumerate(parts):
+            if part.lower() in FIXTURE_DIRS:
+                dirs["/".join(parts[:i + 1])] += 1
+                break
+    if not dirs or not src:
+        return None
+    d, c = dirs.most_common(1)[0]
+    return d, c, len(src)
+
+
+def cmd_ready(_):
+    """One verdict on whether this repo's context is usable: FAIL blocks, warn is worth a look, ok is fine."""
+    if not opted_in():
+        sys.exit(render_prompt("not ready: no .ctx/ yet. Run the build skill ({{command:build}})."))
+    rows = []
+    add = lambda level, text: rows.append((level, text))
+    g = load_json(GRAPH)
+    if not g:
+        add("FAIL", "no index: run `ctxh build-index --verify`")
+    else:
+        lag = index_lag(g)
+        if lag:
+            add("warn", f"index predates changes to {len(lag)} code files: run `ctxh build-index`")
+        else:
+            add("ok", f"index current ({len(g['files'])} files, {len(g['modules'])} modules)")
+    if not MAP.exists():
+        add("FAIL", "no .ctx/map.md: fill .ctx/map.draft.md (`ctxh skeleton`) and save it as map.md")
+    elif "TODO(llm)" in MAP.read_text():
+        add("FAIL", "map.md still has TODO(llm) purpose cells")
+    else:
+        add("ok", f"map.md has {MAP.read_text().count(chr(10))} lines")
+    if g:
+        tests = [c for c in (load_json(COMMANDS, {}) or {}).get("commands", []) if c["kind"] == "test"]
+        if any(c.get("verified") for c in tests):
+            add("ok", "a test command is verified")
+        elif tests:
+            add("warn", "test commands detected but none verified: `ctxh build-index --verify`, or fix one with "
+                        "`ctxh add-command`")
+        else:
+            add("warn", "no test command detected: agents will guess how to run tests "
+                        "(`ctxh add-command test \"<cmd>\"`)")
+        fx = fixture_share(g)
+        if fx and fx[1] * 3 >= fx[2]:
+            add("warn", f"{fx[1]} of {fx[2]} source files are under '{fx[0]}/', which looks like fixtures: add a "
+                        "`.ctxignore` so the map and `q hot` describe the real code")
+        missing, ranked = card_candidates(g)
+        n_src = sum(1 for n in g["files"].values() if n["role"] == "src")
+        if n_src < SMALL_REPO_FILES:
+            add("ok", f"small repo ({n_src} source files): no cards needed, the map is enough")
+        elif not ranked:
+            add("ok", "no module has 3+ source files: no cards needed")
+        elif missing:
+            add("warn", f"central modules without a card: {', '.join(missing)} (one card-writer call each)")
+        else:
+            add("ok", f"cards cover the {len(ranked)} most central modules")
+    stale = stale_report(include_index=False)
+    add("warn" if stale else "ok", f"{len(stale)} stale cards: run the curate skill" if stale else "no stale cards")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            cmd_check([])
+            failed = False
+        except SystemExit as e:
+            failed = bool(e.code)
+    if failed:
+        add("FAIL", "`ctxh check`: " + "; ".join(buf.getvalue().strip().splitlines())[:300])
+    else:
+        add("ok", "`ctxh check` passes")
+    if ADAPTER.NAME == "claude":
+        st = ROOT / ".claude" / "settings.json"
+        if not st.exists() or "ctxh" not in st.read_text():
+            add("warn", "`Bash(ctxh *)` is not allowed in .claude/settings.json: agents get a prompt on every query")
+    code, tracked, _ = sh(["git", "ls-files", ".ctx"])
+    if code == 0 and not tracked.strip():
+        add("warn", ".ctx/ is not committed: teammates and CI start without context")
+    for level, text in rows:
+        print(f"{level:>4}  {text}")
+    fails = sum(1 for level, _ in rows if level == "FAIL")
+    warns = sum(1 for level, _ in rows if level == "warn")
+    print(("not ready" if fails else "ready") + f": {fails} blocking, {warns} warnings")
+    sys.exit(1 if fails else 0)
+
+
 # ---------------------------------------------------------------- transcripts, traces, metrics
 def parse_transcript(path: Path):
     """Tokens, steps, files and commands of one session, from the adapter's normalized trace."""
@@ -2016,7 +2122,7 @@ def cmd_version(_):
 
 COMMANDS_MAP = {
     "build-index": cmd_build_index, "skeleton": cmd_skeleton, "q": cmd_q, "anchor": cmd_anchor,
-    "stale": cmd_stale, "check": cmd_check, "signals": cmd_signals, "usage": cmd_usage,
+    "stale": cmd_stale, "check": cmd_check, "ready": cmd_ready, "signals": cmd_signals, "usage": cmd_usage,
     "stats": cmd_stats, "add-command": cmd_add_command, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop,
     "hook-prompt": cmd_hook_prompt, "version": cmd_version, "init": cmd_init,
     "review-record": cmd_review_record, "review-check": cmd_review_check, "export": cmd_export,
