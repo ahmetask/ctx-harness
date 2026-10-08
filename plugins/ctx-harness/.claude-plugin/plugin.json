@@ -1,7 +1,7 @@
 {
   "name": "ctx-harness",
   "displayName": "Context Harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Automatic, repository-agnostic context for coding agents: a zero-token index, a small always-loaded map, hash-anchored module cards, and scout/planner/reviewer/card-writer agents.",
   "author": {
     "name": "Ahmet Asik"
