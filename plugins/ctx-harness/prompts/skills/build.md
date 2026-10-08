@@ -22,7 +22,7 @@ Run `ctxh skeleton`, then turn `.ctx/map.draft.md` into `.ctx/map.md`:
 - Delete the draft. The map stays under 60 lines because it is injected into every session.
 
 ## 3. Cards for central modules only
-Run `ctxh ready` first. It says whether the repo is too small for cards (under 15 source files: the map is enough, skip steps 3 and the probe) and lists the central modules (3+ source files) that still lack a card. Write cards for those, at most 5. Invoke the `{{agent:card-writer}}` agent once per module, in parallel when possible. Smaller modules get no card; the index and the code are enough.
+Run `ctxh ready` first. It says whether the repo is too small for cards (under 15 source files: the map is enough, skip steps 3 and the probe) and lists the central modules (3+ source files) that still lack a card. Write cards for those, at most 5; each card-writer starts from `ctxh card-draft <module>`, so it only has to add invariants. Invoke the `{{agent:card-writer}}` agent once per module, in parallel when possible. Smaller modules get no card; the index and the code are enough.
 
 ## 4. Verify and prune
 - Run `ctxh ready` and fix every `FAIL` line (it includes `ctxh check`). Treat each `warn` line as a question to settle, not noise: a `.ctxignore` for fixtures, an unverified test command, an uncommitted `.ctx/`.
