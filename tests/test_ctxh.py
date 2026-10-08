@@ -37,6 +37,7 @@ class Repo:
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("CLAUDE_PROJECT_DIR", "CTXH_", "CTX_"))}
         env.update(GIT_ENV)
+        env.update({"CTXH_PLAN_GATE": "1", "CTXH_REVIEW_GATE": "1"})  # the gates are opt-in; most tests exercise them
         env.update(extra or {})
         return env
 
@@ -290,6 +291,45 @@ class CardsAndHooks(unittest.TestCase):
         self.assertIn("ctx-harness:planner", out)
         self.assertIn("ctx-harness:reviewer", out)
         self.assertIn("run_in_background: false", out)
+
+
+class LeanDefaults(unittest.TestCase):
+    """Out of the box the harness adds no subagent and no blocked turn: both gates are opt-in."""
+    OFF = {"CTXH_PLAN_GATE": "", "CTXH_REVIEW_GATE": ""}
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        self.repo.ctxh("build-index")
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_stop_hook_never_blocks_and_still_records(self):
+        tp = self.repo.root / "lean.jsonl"
+        files = ["app/orders/service.py", "app/payments/client.py", "app/common/retry.py"]
+        transcript(tp, [("Edit", {"file_path": str(self.repo.root / f)}) for f in files])
+        out = self.repo.ctxh("hook-stop", env=self.OFF, stdin=json.dumps(
+            {"session_id": "lean", "transcript_path": str(tp)})).stdout
+        self.assertEqual(out, "")
+        self.assertTrue((self.repo.root / ".ctx" / "metrics" / "lean.json").exists())
+
+    def test_prompt_hook_is_silent_without_a_gate_or_a_plan(self):
+        self.assertEqual(self.repo.ctxh("hook-prompt", env=self.OFF, stdin="{}").stdout, "")
+        active = self.repo.root / ".ctx" / "tasks" / "active.md"
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text("# plan\n")
+        self.assertEqual(self.repo.ctxh("hook-prompt", env=self.OFF, stdin="{}").stdout.strip(),
+                         "Active plan: .ctx/tasks/active.md")
+        only_review = self.repo.ctxh("hook-prompt", env={**self.OFF, "CTXH_REVIEW_GATE": "1"}, stdin="{}").stdout
+        self.assertIn("ctx-harness:reviewer", only_review)
+        self.assertNotIn("ctx-harness:planner", only_review)
+
+    def test_protocol_makes_subagents_opt_in(self):
+        start = self.repo.ctxh("hook-start", env=self.OFF, stdin="{}").stdout
+        self.assertIn("opt-in", start)
+        self.assertNotIn("ask `ctx-harness:planner` first", start)
+        self.assertLess(len(start), 7000)  # protocol + map is paid for on every turn
 
 
 class Polyglot(unittest.TestCase):

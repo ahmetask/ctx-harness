@@ -42,22 +42,22 @@ Requirements: Claude Code, git, and Python 3.10+ on macOS or Linux. The engine u
 | Piece | Name | Role |
 |---|---|---|
 | Coder | your main session | The only agent that edits files. Follows `protocol.md`, which a hook injects at session start |
-| Scout | `ctx-harness:scout` (Haiku) | Read-only lookups that return a few lines with `file:line`, so the coder's context stays clean |
-| Planner | `ctx-harness:planner` | For 3+ file changes whose scope or design is open: writes `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps). When the request already says what to change, the coder writes a short plan itself. It waits for your approval only on choices the request left open |
-| Reviewer | `ctx-harness:reviewer` | Reviews the diff with a fresh context, never the coder's reasoning. Also reports context the change made outdated |
+| Scout | `ctx-harness:scout` (Haiku) | Optional. Read-only lookups for questions that would take 5+ file reads; returns a few lines with `file:line` |
+| Planner | `ctx-harness:planner` | Opt-in. When you ask for a plan, or the design is open and has no reasonable default: writes `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps) |
+| Reviewer | `ctx-harness:reviewer` | Opt-in. When you ask for a review, or a change touches 6+ files or a fragile file: reviews the diff with a fresh context, never the coder's reasoning. Also reports context the change made outdated |
 | Card-writer | `ctx-harness:card-writer` (Haiku) | Writes one module card, used by build and curate |
 | Build | `/ctx-harness:build` | Bootstraps `.ctx/` from zero |
 | Curate | `/ctx-harness:curate` | After merges: refreshes stale cards and promotes recurring facts from task traces |
 | Status | `/ctx-harness:status` | Shows freshness, budget checks and token stats |
 | Engine | `ctxh` | Deterministic index, queries, freshness checks and metrics. On the agents' `PATH` |
 
-The coder is your normal session rather than a subagent, because the agent that writes code should hold your whole conversation. Helpers work in isolated contexts and hand back short answers.
+The coder is your normal session rather than a subagent, because the agent that writes code should hold your whole conversation. By default it works alone: every helper starts a context of its own, which costs more tokens and time than it saves on most tasks (measured in [docs/benchmark.md](docs/benchmark.md)). Helpers are for the cases named above.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A["Session start<br/>protocol + map injected"] --> B["Plan<br/>3+ files only"] --> C["Explore<br/>ctxh q, card, scout"] --> D["Implement + review"] --> E["Stop hook<br/>metrics, trace, plan + review gates"]
+    A["Session start<br/>protocol + map injected"] --> C["Explore<br/>map, card, ctxh q"] --> D["Implement<br/>(plan or review only when asked)"] --> E["Stop hook<br/>metrics, trace (opt-in gates)"]
     E -.->|traces| F["Curate<br/>after merge"]
     F -.->|fresh map + cards| A
 ```
@@ -67,8 +67,8 @@ Step-by-step sequence diagrams are in [docs/flow.md](docs/flow.md).
 **Hooks** (they run automatically, and only in repos that have `.ctx/`):
 
 - **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index. It runs again after the conversation is compacted (and on `--resume`). When a plan is active, the injection then names the plan and repeats the last 8 entries of its progress log, so the agent picks up where it left off instead of re-planning.
-- **UserPromptSubmit:** a one-line reminder of the two rules agents skip most often: plan for 3+ files, and review before finishing. In Claude Code it also says to run subagents in the foreground, so the coder waits for the plan or review instead of redoing the work or polling for it.
-- **Stop:** records tokens, steps, files read and edited, failed commands and empty index queries. If code changed since the last reviewer run, it blocks finishing once and asks for a review. It blocks only once per edit, so it can't loop.
+- **UserPromptSubmit:** silent by default. It points at an active plan, and when a gate below is on it reminds the agent of that gate's rule (in Claude Code, also to run subagents in the foreground).
+- **Stop:** records tokens, steps, files read and edited, failed commands and empty index queries. With `CTXH_REVIEW_GATE=1` it also blocks finishing once if code changed since the last reviewer run, and with `CTXH_PLAN_GATE=1` once if 3+ code files changed with no plan. Both gates are off by default because each costs a model turn plus a subagent; each blocks only once per edit, so neither can loop.
 
 In a repo without `.ctx/`, the hooks print a one-line hint and write nothing.
 
@@ -164,7 +164,7 @@ ctxh init --target aider          # CONVENTIONS.md, plus `read: CONVENTIONS.md` 
 ctxh init --target agents-md,gemini   # several at once
 ```
 
-Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, plan to `.ctx/tasks/active.md` before touching 3+ files, and run `ctxh stale` at the end. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
+Each target gets a short, tool-neutral version of the protocol. It tells the agent to read `.ctx/map.md` and any active plan, ask `ctxh q` before grepping, read only the card of the module it changes, and plan to `.ctx/tasks/active.md` only when the request leaves the design open. The block sits between `<!-- ctx-harness:begin -->` and `<!-- ctx-harness:end -->`. Re-running replaces only that block and leaves the rest of the file alone, and a run with nothing new changes nothing. The agent needs `ctxh` on its `PATH`: add `plugins/ctx-harness/bin/` from a checkout of this repo, or run it as `python3 <path>/ctxh`.
 
 ### Gemini CLI extension
 
@@ -216,7 +216,7 @@ In CI, check a pull request against its base. This needs the history: `fetch-dep
 - run: python3 path/to/ctx-harness/plugins/ctx-harness/bin/ctxh review-check --base origin/${{ github.base_ref }}
 ```
 
-A record shows that someone ran `review-record` on that exact content. It doesn't show that the review was any good. `CTXH_REVIEW_GATE=0` skips the check. After updating the plugin, re-run `--install-hook`, because the hook points at the `ctxh` path it was installed from.
+A record shows that someone ran `review-record` on that exact content. It doesn't show that the review was any good. `CTXH_REVIEW_GATE=0` skips the check (the Stop-hook gate is a separate opt-in, `CTXH_REVIEW_GATE=1`). After updating the plugin, re-run `--install-hook`, because the hook points at the `ctxh` path it was installed from.
 
 ## Sharing traces across a team (opt-in)
 
@@ -245,8 +245,8 @@ Curation should follow merges, not run during a task. Options:
 |---|---|
 | `CTXH_DISABLED=1` | Harness off for the session: nothing is injected, and the run is recorded as `baseline` |
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
-| `CTXH_REVIEW_GATE=0` | Turns off the Stop-hook review check and `ctxh review-check` |
-| `CTXH_PLAN_GATE=0` | Turns off the Stop-hook check that a 3+ file change was planned |
+| `CTXH_REVIEW_GATE=1` | Opt in: the Stop hook blocks once when code changed and no reviewer ran after the last edit. `CTXH_REVIEW_GATE=0` turns off `ctxh review-check` |
+| `CTXH_PLAN_GATE=1` | Opt in: the Stop hook blocks once when 3+ code files changed with no plan |
 | `CTXH_PARSER=regex` | Use the regex parser even when tree-sitter is installed |
 | `CTXH_TRACE_SINK=<dir or URL>` | Also send each trace to a shared directory, HTTP endpoint or Redis; `ctxh signals` reads it back |
 | `CTXH_TRACE_REPO=<name>` | The repo's key in the shared store (default: the `origin` URL) |

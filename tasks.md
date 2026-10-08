@@ -84,7 +84,7 @@ Fixtures in `tests/fixtures/transcripts/` (a session with a subagent, a reviewed
 Compaction fires `SessionStart` with source `compact`, which already re-ran `hook-start` (protocol and map). With an active plan, `hook-start` now adds the plan's title, path and the last 8 progress-log entries on `compact` and `resume`. This was checked live with `/compact` in the sandbox, and tests cover it. See `.ctx/tasks/done/T08-compaction.md`.
 
 ### T09 · Hook-enforced plan gate (done)
-The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ctx/tasks/active.md`, or a planner call in the session), before the review gate; both share `gate_once` and `.ctx/tmp/gates/<session>.json`. `CTXH_PLAN_GATE=0` turns it off. See `.ctx/tasks/done/T09-plan-gate.md`.
+The Stop hook blocks once when 3+ distinct code files changed with no plan (`.ctx/tasks/active.md`, or a planner call in the session), before the review gate; both share `gate_once` and `.ctx/tmp/gates/<session>.json`. Opt-in since 0.4.0: `CTXH_PLAN_GATE=1` turns it on (the gates cost a subagent and a turn; see `docs/benchmark.md`). See `.ctx/tasks/done/T09-plan-gate.md`.
 
 ### T19 · Review gate outside the agent (done)
 Opt-in `.ctx/reviews.json` (code path -> reviewed blob id), `ctxh review-record`, `ctxh review-check [--staged | --base REF]`, `--install-hook` for pre-commit, and auto-recording from the Stop hook when the reviewer ran after the last edit. See `.ctx/tasks/done/T19-review-gate-outside.md`.

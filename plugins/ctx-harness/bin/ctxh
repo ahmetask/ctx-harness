@@ -29,8 +29,10 @@ session transcript looks like live in an adapter (adapters/<tool>.py, see adapte
 Environment:
   CTXH_DISABLED=1     turn the harness off for a session (baseline runs)
   CTXH_TASK=<name>    label a session's metrics for paired harness/baseline comparisons
-  CTXH_REVIEW_GATE=0  skip the Stop-hook check that a reviewer ran after the last code edit
-  CTXH_PLAN_GATE=0    skip the Stop-hook check that a 3+ file change was planned first
+  CTXH_REVIEW_GATE=1  opt in: the Stop hook blocks once when code changed and no reviewer ran after the last edit
+  CTXH_PLAN_GATE=1    opt in: the Stop hook blocks once when 3+ code files changed with no plan
+                      (both are off by default: they cost a model turn plus a subagent per task;
+                      CTXH_REVIEW_GATE=0 also switches off `ctxh review-check`)
   CTXH_TOOL=<name>    agent adapter to use (default: claude)
   CTXH_PARSER=regex   ignore tree-sitter even when it is installed
   CTXH_TRACE_SINK=<dir | http(s)://url | redis://host[:port][/db]>   also send traces there; signals reads it
@@ -50,7 +52,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -1609,9 +1611,9 @@ This repo keeps compact, maintained context in `.ctx/`. Use it before exploring:
 - Start with `.ctx/map.md` (stack, modules, verified commands, fragile files). If `.ctx/tasks/active.md` exists, read it and continue from its progress log.
 - Ask the index before grep: `ctxh q find <symbol>`, `ctxh q rdeps|impact|cochange|tests|owner <file>`, `ctxh q module <file>`. Only the answer enters your context. Grep and read targeted ranges only when the index has no answer.
 - Before changing a module, read its card, `.ctx/cards/<module-with-dashes>.md`, and only that one. Gotchas from past tasks are in `.ctx/learned.md`.
-- Changing 3+ files, or the scope is unclear: write a plan to `.ctx/tasks/active.md` (goal, scope, acceptance criteria, risks, steps, progress log) before coding. Ask the user to approve it only when it makes a choice the request left open. Append to the progress log after each step.
+- Read the card, then the files it and the map point to, in one batch, and edit. Do not explore beyond them unless they fall short.
 - Validate with the verified commands listed in the map.
-- Before finishing: review your own diff as a stranger would, run `ctxh stale`, and tell the user which cards are stale. Move the finished plan to `.ctx/tasks/done/`.
+- Only when the request leaves the design open and no reasonable default exists, write a short plan to `.ctx/tasks/active.md` and ask the user to decide. Do not plan or review as a routine step.
 - `.ctx/map.md`, `.ctx/cards/` and `.ctx/learned.md` are maintained by the curation step, not edited during a task.
 
 `ctxh` is the ctx-harness engine (`plugins/ctx-harness/bin/ctxh` in https://github.com/ahmetask/ctx-harness, Python 3 stdlib only); put its `bin/` on `PATH` or run it as `python3 <path>/ctxh`. Full protocol: https://github.com/ahmetask/ctx-harness/blob/main/plugins/ctx-harness/protocol.md"""
@@ -1802,20 +1804,33 @@ def cmd_hook_start(_):
     ADAPTER.emit_context("\n\n".join(out))
 
 
+def gate_on(name):
+    """The Stop-hook gates are opt-in (CTXH_PLAN_GATE=1, CTXH_REVIEW_GATE=1): each costs a subagent and a turn."""
+    return env(name) == "1"
+
+
 def cmd_hook_prompt(_):
-    """Recite the two rules agents most often skip, right where the next decision is made."""
+    """With a gate on, recite its rule right where the next decision is made; always point at an active plan."""
     ADAPTER.read_event(sys.stdin)
     if env("DISABLED") == "1" or not opted_in():
         return
-    lines = [render_prompt("ctx-harness: if this request means changing 3+ files and leaves the scope or design open, "
-                           "call {{agent:planner}} first; if it already says what to change, write a short plan to "
-                           "`.ctx/tasks/active.md` yourself. Before finishing any code change, run {{agent:reviewer}}, "
-                           "then `ctxh stale`.\n{{only:claude}}Run subagents in the foreground "
-                           "(`run_in_background: false`) and wait for their answer.").rstrip("\n")]
+    lines = []
+    if gate_on("PLAN_GATE") or gate_on("REVIEW_GATE"):  # the reminder exists to avoid a gate's blocked turn
+        rules = []
+        if gate_on("PLAN_GATE"):
+            rules.append("if this request means changing 3+ files and leaves the scope or design open, call "
+                         "{{agent:planner}} first; if it already says what to change, write a short plan to "
+                         "`.ctx/tasks/active.md` yourself.")
+        if gate_on("REVIEW_GATE"):
+            rules.append("Before finishing any code change, run {{agent:reviewer}}.")
+        lines.append(render_prompt("ctx-harness: " + " ".join(rules)
+                                   + "\n{{only:claude}}Run subagents in the foreground (`run_in_background: false`) "
+                                     "and wait for their answer.").rstrip("\n"))
     active = CTX / "tasks" / "active.md"
     if active.exists() and active.read_text().strip():
         lines.append("Active plan: .ctx/tasks/active.md")
-    ADAPTER.emit_context("\n".join(lines))
+    if lines:
+        ADAPTER.emit_context("\n".join(lines))
 
 
 def session_edits(path: Path):
@@ -1899,14 +1914,14 @@ def cmd_hook_stop(_):
     if disabled:
         return
     info = session_edits(path)
-    if env("PLAN_GATE", "1") != "0":  # plan first, review second: the same order the protocol asks for
+    if gate_on("PLAN_GATE"):  # plan first, review second: the same order the protocol asks for
         reason = plan_gate_reason(info)
         if reason and gate_once(session, "blocked_plan", info["last_edit"]):
             ADAPTER.emit_block(reason)
             return
     if info["reviewed_after"] and info["last_edit"] and REVIEWS.exists():
         record_reviews()  # the reviewer ran after the last edit: that is the record review-check looks for
-    if env("REVIEW_GATE", "1") == "0":
+    if not gate_on("REVIEW_GATE"):
         return
     edit = None if info["reviewed_after"] else info["last_edit"]
     if edit and gate_once(session, "blocked_edit", edit):  # block once per edit, never loop

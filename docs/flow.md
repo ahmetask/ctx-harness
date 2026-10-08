@@ -38,7 +38,7 @@ sequenceDiagram
 
 ## 2. Prompt and plan
 
-The plan step runs only for larger or unclear tasks.
+By default the prompt hook adds nothing and the coder starts working; the plan step is for a user-requested plan or a design with no reasonable default, and `CTXH_PLAN_GATE=1` makes it a rule for 3+ file changes.
 
 ```mermaid
 sequenceDiagram
@@ -57,8 +57,8 @@ sequenceDiagram
     end
     U->>CC: prompt
     CC->>X: hook-prompt
-    X-->>C: reminder: plan for 3+ files, review before finishing
-    opt 3+ files, scope or design open (a fully specified request: the coder writes the plan itself)
+    X-->>C: nothing by default (a gate's rule when CTXH_PLAN_GATE / CTXH_REVIEW_GATE is on)
+    opt plan requested, or design open with no reasonable default
         C->>+P: plan this (foreground)
         P->>X: q impact / cochange / tests
         X-->>P: affected files + co-change partners
@@ -97,7 +97,7 @@ sequenceDiagram
 
 ## 4. Implement and review
 
-The reviewer gets a fresh context.
+The coder implements alone by default. The review below runs when you ask for it, when a change touches 6+ files or a fragile file, or when `CTXH_REVIEW_GATE=1` makes it a rule. The reviewer gets a fresh context.
 
 ```mermaid
 sequenceDiagram
@@ -131,7 +131,7 @@ sequenceDiagram
 
 ## 5. Stop hook
 
-The Stop hook runs after every turn. It handles measurement plus two one-time gates: a plan gate for changes that spread over 3+ code files, then the review gate. Each blocks at most once per state, so neither can loop.
+The Stop hook runs after every turn. It handles measurement plus two opt-in, one-time gates (`CTXH_PLAN_GATE=1`, `CTXH_REVIEW_GATE=1`): a plan gate for changes that spread over 3+ code files, then the review gate. Each blocks at most once per state, so neither can loop.
 
 ```mermaid
 sequenceDiagram

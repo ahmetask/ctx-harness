@@ -1,6 +1,6 @@
 ---
 name: card-writer
-description: Writes or refreshes one module card in .ctx/cards from the index and the module's code. Used by the ctx-harness build and curate skills, one module per invocation.
+description: Writes or refreshes one module card in .ctx/cards; used by the build and curate skills.
 tools: read, search, shell, write
 model: fast
 ---

@@ -63,7 +63,9 @@ def smoke(repo: Path) -> bool:
     """Each check mirrors something Claude Code does with the plugin."""
     scratch = Path(tempfile.mkdtemp(prefix="ctxh-sandbox-"))
     edit = write_transcript(scratch / "edit.jsonl", [("Edit", {"file_path": str(repo / "internal/orders/service.go")})])
-    gate = ctxh(repo, "hook-stop", payload={"session_id": "sandbox-smoke", "transcript_path": str(edit)})
+    default_stop = ctxh(repo, "hook-stop", payload={"session_id": "sandbox-smoke", "transcript_path": str(edit)})
+    gate = ctxh(repo, "hook-stop", payload={"session_id": "sandbox-smoke-gate", "transcript_path": str(edit)},
+                CTXH_REVIEW_GATE="1")
     for leftover in (".ctx/tmp/gates", ".ctx/metrics", ".ctx/traces"):  # keep the fake session out of stats
         for f in (repo / leftover).glob("sandbox-smoke*"):
             f.unlink()
@@ -71,13 +73,16 @@ def smoke(repo: Path) -> bool:
 
     checks = [
         ("SessionStart injects the protocol", "Working protocol" in ctxh(repo, "hook-start").stdout),
-        ("UserPromptSubmit reminds about planner/reviewer", "ctx-harness" in ctxh(repo, "hook-prompt").stdout),
+        ("UserPromptSubmit adds nothing by default", ctxh(repo, "hook-prompt").stdout == ""),
+        ("UserPromptSubmit names the reviewer once its gate is on",
+         "ctx-harness:reviewer" in ctxh(repo, "hook-prompt", CTXH_REVIEW_GATE="1").stdout),
         ("CTXH_DISABLED=1 injects nothing", ctxh(repo, "hook-start", CTXH_DISABLED="1").stdout == ""),
         ("q find answers from the index", "internal/payments/idempotency.go" in ctxh(repo, "q", "find", "IdempotencyKey").stdout),
         ("q cochange finds the planted pair",
          "internal/notify/templates.go" in ctxh(repo, "q", "cochange", "internal/orders/state.go").stdout),
         ("ctxh check passes", ctxh(repo, "check").returncode == 0),
-        ("Stop blocks an unreviewed edit", '"block"' in gate.stdout),
+        ("Stop does not block by default", '"block"' not in default_stop.stdout),
+        ("Stop blocks an unreviewed edit once the review gate is on", '"block"' in gate.stdout),
     ]
     for name, ok in checks:
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")

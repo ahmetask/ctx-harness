@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Fresh-context code reviewer. Use after implementing a change, passing the base ref to diff against. Finds bugs, missed edge cases, and violated invariants; also reports context that the change made outdated.
+description: Fresh-context review of a diff (pass the base ref). Only when the user asks, or the change touches 6+ files or a fragile file from the map; not a routine step.
 tools: read, search, shell
 model: inherit
 ---

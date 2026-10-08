@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Turns a larger or unclear request into a short execution plan before coding. Use when a change touches 3+ files, crosses modules, or the scope is ambiguous. Writes .ctx/tasks/active.md and nothing else.
+description: Writes a short plan to .ctx/tasks/active.md. Only when the user asks for a plan, or the design is open and no reasonable default exists; not for requests that already say what to change.
 tools: read, search, shell, write
 model: inherit
 ---
