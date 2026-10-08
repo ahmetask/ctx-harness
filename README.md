@@ -100,6 +100,7 @@ ctxh q risk client.py            # fix/revert commits touching it
 ctxh q tests repo.py
 ctxh stale                       # cards whose source files changed
 ctxh check                       # budgets, dead paths, unstamped anchors, instruction-like phrasing
+ctxh card-draft app/orders       # new card with anchors, history, co-change and tests from the index; only the invariants are left to write
 ctxh ready                       # is the context usable? FAIL blocks (no index, unfilled map, check errors); warn lists gaps (fixtures, unverified tests, missing cards, uncommitted .ctx/)
 ctxh stats                       # harness vs baseline token medians and break-even
 ctxh add-command test "<cmd>" [--replaces "<detected cmd>"]   # keep a fixed or added command

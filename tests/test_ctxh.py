@@ -226,6 +226,17 @@ class CardsAndHooks(unittest.TestCase):
         self.assertIn("small repo", r.stdout)  # a handful of files needs no cards
         self.assertIn(".ctx/ is not committed", r.stdout)
 
+    def test_card_draft_is_anchored_and_blocks_until_filled(self):
+        self.card.unlink()
+        r = self.repo.ctxh("card-draft", "app/orders")
+        self.assertIn("drafted", r.stdout)
+        text = self.card.read_text()
+        self.assertRegex(text, r"app/orders/service.py: [0-9a-f]{12}")
+        self.assertIn("TODO(llm)", text)
+        self.assertIn("unfilled TODO(llm)", self.repo.ctxh("check", check=False).stdout)
+        self.assertNotEqual(self.repo.ctxh("card-draft", "app/orders", check=False).returncode, 0)  # no overwrite
+        self.assertNotEqual(self.repo.ctxh("card-draft", "nope", check=False).returncode, 0)
+
     def test_ready_without_ctx_dir_says_how_to_start(self):
         bare = Repo()
         try:

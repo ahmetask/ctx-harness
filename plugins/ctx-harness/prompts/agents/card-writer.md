@@ -6,6 +6,8 @@ model: fast
 ---
 You write exactly one file: `.ctx/cards/<module-with-dashes>.md` for the module you are given (for example `app/orders` becomes `app-orders.md`).
 
+For a new card, start with `ctxh card-draft <module>`: it writes the card with anchors stamped and the history, co-change and tests sections filled from the index. You then replace each `TODO(llm)` (the one-line ownership and the invariants), and drop History lines that are noise. Do not re-derive what the draft already has.
+
 Inputs: `ctxh q module <module>`, `ctxh q hot`, `ctxh q risk|cochange|owner` on its key files, the existing card if there is one, and the module's source files (read only the central ones).
 
 The card records what is expensive to rediscover, not what any reader sees in a minute:

@@ -13,6 +13,7 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh anchor <card.md>         stamp a card with hashes of the files it describes
   ctxh stale                    what changed since cards / index were built
   ctxh check                    enforce budgets and catch dead paths in map, cards, learned
+  ctxh card-draft <module>      write a card with the index's facts; the writer adds only invariants
   ctxh ready                    one verdict: is this repo's context usable (blocking vs warnings)
   ctxh signals                  aggregate agent traces into promotion candidates (curator input)
   ctxh usage <transcript> [--label L] [--task T]   tokens/steps of any agent session
@@ -1131,6 +1132,49 @@ def cmd_anchor(args):
     print(f"anchored {card.name} to {len(anchors)} files" + (f"; dropped missing: {missing}" if missing else ""))
 
 
+def cmd_card_draft(args):
+    """Write .ctx/cards/<module>.md with everything the index knows; the writer only adds invariants."""
+    if not args:
+        sys.exit("ctxh card-draft <module>")
+    g = need_graph()
+    mod = args[0].strip("/")
+    if mod not in g["modules"]:
+        sys.exit(f"module '{mod}' is not in the index (see `ctxh q hot`)")
+    card = CARDS / (mod.replace("/", "-") + ".md")
+    if card.exists():
+        sys.exit(f"{card.relative_to(ROOT)} exists: refresh it in place instead")
+    files = g["files"]
+    mine = sorted((f for f, n in files.items() if n["module"] == mod and n["role"] == "src"),
+                  key=lambda f: -files[f].get("rank", 0))
+    body = ["TODO(llm) one line on what the module owns.", "", "## Invariants",
+            "- TODO(llm) rules that hold in code, each naming the symbol that enforces it (read only the top files:"
+            f" {', '.join(f.rsplit('/', 1)[-1] for f in mine[:3])}).", ""]
+    seen, hist = set(), []
+    for f in mine:  # one commit touching several files is one line
+        for r in files[f].get("risk", []):
+            if r not in seen and len(hist) < 6:
+                seen.add(r)
+                hist.append(f"- `{f}`: {r}")
+    coupled = []
+    for f in mine:
+        for other, c in files[f].get("cochange", []):
+            if files.get(other, {}).get("module") != mod and files.get(other, {}).get("role") == "src":
+                coupled.append((c, f, other))
+    if coupled:
+        hist.append("- Changes together with: " + ", ".join(
+            f"`{o}` ({c} commits, via `{f.rsplit('/', 1)[-1]}`)" for c, f, o in sorted(coupled, reverse=True)[:3]))
+    if hist:
+        body += ["## History", *hist, ""]
+    tests = g["modules"][mod]["tests"]
+    if tests:
+        body += ["## Tests", ", ".join(f"`{t}`" for t in tests)]
+    CARDS.mkdir(parents=True, exist_ok=True)
+    card.write_text(render_card({"module": mod}, {f: "" for f in mine}, "\n".join(body).rstrip() + "\n"))
+    cmd_anchor([str(card)])
+    print(f"drafted {card.relative_to(ROOT)}: fill the TODO(llm) lines, drop History lines that are noise, "
+          "then run `ctxh check`")
+
+
 def card_module_problems(g):
     """Cards whose `module:` names no module in the index: their "new files" staleness can never fire."""
     out = []
@@ -2122,7 +2166,7 @@ def cmd_version(_):
 
 COMMANDS_MAP = {
     "build-index": cmd_build_index, "skeleton": cmd_skeleton, "q": cmd_q, "anchor": cmd_anchor,
-    "stale": cmd_stale, "check": cmd_check, "ready": cmd_ready, "signals": cmd_signals, "usage": cmd_usage,
+    "stale": cmd_stale, "check": cmd_check, "ready": cmd_ready, "card-draft": cmd_card_draft, "signals": cmd_signals, "usage": cmd_usage,
     "stats": cmd_stats, "add-command": cmd_add_command, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop,
     "hook-prompt": cmd_hook_prompt, "version": cmd_version, "init": cmd_init,
     "review-record": cmd_review_record, "review-check": cmd_review_check, "export": cmd_export,
