@@ -289,6 +289,7 @@ class CardsAndHooks(unittest.TestCase):
         out = self.repo.ctxh("hook-prompt", stdin="{}").stdout
         self.assertIn("ctx-harness:planner", out)
         self.assertIn("ctx-harness:reviewer", out)
+        self.assertIn("run_in_background: false", out)
 
 
 class Polyglot(unittest.TestCase):
@@ -537,6 +538,12 @@ class PlanGate(unittest.TestCase):
         # The plan may already be filed under done/ by the time the session stops.
         out = self.session(self.THREE, extra=[("Agent", {"subagent_type": "ctx-harness:planner",
                                                          "prompt": "plan the change"})], session_id="p4")
+        self.assertEqual(out, "")
+
+    def test_a_plan_the_coder_wrote_counts(self):
+        # A fully specified request skips the planner; the coder's own plan may also be filed under done/.
+        plan = str(self.repo.root / ".ctx" / "tasks" / "active.md")
+        out = self.session(self.THREE, extra=[("Write", {"file_path": plan, "content": "# plan"})], session_id="p8")
         self.assertEqual(out, "")
 
     def test_off_switch_leaves_the_review_gate_alone(self):
@@ -1314,6 +1321,7 @@ class Prompts(unittest.TestCase):
                                env=repo.env({"GEMINI_PROJECT_DIR": str(repo.root)}))
             ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
             self.assertIn("call ctx-harness-planner first", ctx)
+            self.assertNotIn("run_in_background", ctx)  # a Claude Code tool parameter
             r = subprocess.run([sys.executable, str(out / "bin" / "ctxh"), "hook-start", "--tool", "gemini"],
                                cwd=repo.root, input="{}", capture_output=True, text=True,
                                env=repo.env({"GEMINI_PROJECT_DIR": str(repo.root)}))
