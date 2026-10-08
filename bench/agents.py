@@ -62,8 +62,8 @@ def ctxh(repo: Path, *args, check=True):
 class ClaudeAgent:
     name = "claude"
 
-    def __init__(self, model=None, review_gate=True, max_turns=False, claude_bin="claude", timeout=3600):
-        self.model, self.review_gate, self.bin, self.timeout = model, review_gate, claude_bin, timeout
+    def __init__(self, model=None, gates=False, max_turns=False, claude_bin="claude", timeout=3600):
+        self.model, self.gates, self.bin, self.timeout = model, gates, claude_bin, timeout
         self.max_turns = max_turns  # pass each task's turn limit as --max-turns (not every CLI build lists it)
         if not shutil.which(claude_bin):
             raise SystemExit(f"'{claude_bin}' not found on PATH; install Claude Code or use --agent fake")
@@ -85,8 +85,8 @@ class ClaudeAgent:
         if mode in ("harness", "bootstrap"):
             cmd += ["--plugin-dir", str(PLUGIN_DIR)]
             env["PATH"] = f"{PLUGIN_DIR / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-            if not self.review_gate:
-                env["CTXH_REVIEW_GATE"] = "0"
+            if self.gates:  # the plan and review gates are opt-in
+                env["CTXH_REVIEW_GATE"] = env["CTXH_PLAN_GATE"] = "1"
         else:
             env["CTXH_DISABLED"] = "1"  # inert even if the plugin is installed user-wide
         t0 = time.time()
@@ -219,9 +219,9 @@ class NoopAgent(FakeAgent):
     apply_solution = False
 
 
-def make_agent(name, model=None, review_gate=True, max_turns=False, timeout=3600):
+def make_agent(name, model=None, gates=False, max_turns=False, timeout=3600):
     if name == "claude":
-        return ClaudeAgent(model=model, review_gate=review_gate, max_turns=max_turns, timeout=timeout)
+        return ClaudeAgent(model=model, gates=gates, max_turns=max_turns, timeout=timeout)
     if name == "fake":
         return FakeAgent()
     if name == "noop":

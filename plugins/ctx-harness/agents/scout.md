@@ -1,6 +1,6 @@
 ---
 name: scout
-description: Read-only codebase lookup. Use for "where is X handled", "what calls Y", "what breaks if Z changes", or any question that would otherwise mean reading several files. Returns a short answer with file:line pointers, keeping the caller's context clean.
+description: Read-only lookup for a question that would take 5+ file reads ("where is X decided", "what breaks if Y changes"). Returns a short answer with file:line pointers.
 tools: Read, Grep, Glob, Bash
 model: haiku
 ---

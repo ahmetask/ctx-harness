@@ -135,7 +135,7 @@ def main(argv=None):
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--modes", default=",".join(MODES), help="harness,baseline (default: both)")
     ap.add_argument("--model", help="model passed to claude --model")
-    ap.add_argument("--no-review-gate", action="store_true", help="set CTXH_REVIEW_GATE=0 for harness runs")
+    ap.add_argument("--gates", action="store_true", help="turn the opt-in plan and review gates on for harness runs")
     ap.add_argument("--max-turns", action="store_true", help="pass each task's max_turns to claude --max-turns")
     ap.add_argument("--timeout", type=int, default=3600, help="seconds before a claude run is killed")
     ap.add_argument("--ctx-from", help="reuse a .ctx snapshot (e.g. bench/results/<run>/ctx) instead of bootstrapping")
@@ -149,7 +149,7 @@ def main(argv=None):
     if not shutil.which("go"):
         raise SystemExit("go is required to run the demo repo's checks")
     tasks = load_tasks(args.tasks)
-    agent = make_agent(args.agent, model=args.model, review_gate=not args.no_review_gate,
+    agent = make_agent(args.agent, model=args.model, gates=args.gates,
                        max_turns=args.max_turns, timeout=args.timeout)
     engine = load_engine()
 
@@ -163,7 +163,7 @@ def main(argv=None):
     work = Path(tempfile.mkdtemp(prefix="ctxh-bench-"))
     scratch = run_dir / "transcripts"
     meta = {"run": run_id, "agent": agent.name, "model": args.model, "repeats": args.repeats, "modes": modes,
-            "tasks": [t.id for t in tasks], "review_gate": not args.no_review_gate,
+            "tasks": [t.id for t in tasks], "gates": args.gates,
             "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "synthetic": agent.name != "claude"}
     (run_dir / "run.json").write_text(json.dumps(meta, indent=1))
     results = run_dir / "results.jsonl"

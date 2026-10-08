@@ -1,6 +1,32 @@
 # Benchmark results
 
+## Rerun, 2026-10-08: lean default flow (plugin 0.4.0)
+
+After the pilot below, the harness still cost more than the baseline on t4: 80k uncached tokens vs 28k, and 86s vs 37s. The cause was not the context (the map and card are about 1.5k tokens). It was the planner and reviewer subagents, plus the turns the plan and review gates forced. 0.4.0 makes both gates and both subagents opt-in, and keeps the protocol to working from the map and the module card.
+
+- Command: `python3 bench/run.py --agent claude --tasks t4,t2,t1 --repeats 3 --ctx-from bench/demo/ctx --keep` (gates off, the new default). Model `claude-sonnet-5-5`, Claude Code 2.1.292, demo repo with the committed `bench/demo/ctx`. 18 sessions, all 18 passed their hidden checks and the regression suite.
+- Medians of 3 runs per cell; cost is the sum of the 3 runs. "Tokens" include cache reads, which grow with every model call; "uncached" is fresh input plus output plus cache writes.
+
+| task | mode | tokens | uncached | steps | time | cost |
+|---|---|---|---|---|---|---|
+| t1 locate | harness | 123.7k | 13.4k | 3 | 16s | $0.24 |
+| t1 locate | baseline | 159.7k | 13.1k | 4 | 15s | $0.26 |
+| t2 bugfix | harness | 176.8k | 19.9k | 3 | 28s | $0.38 |
+| t2 bugfix | baseline | 333.1k | 18.2k | 9 | 32s | $0.46 |
+| t4 cross-module | harness | 284.3k | 25.6k | 5 | 31s | $0.49 |
+| t4 cross-module | baseline | 318.2k | 25.4k | 6 | 36s | $0.53 |
+| **all 9 runs per mode** | harness | 1.74M | 172.6k | | 229s | $1.11 |
+| | baseline | 2.36M | 170.6k | | 253s | $1.24 |
+
+- **Total tokens -26%, wall time -9%, cost -10%** against the baseline. The saving comes from fewer steps: the map and card name the files, so the agent skips the discovery turns (t2: 3 steps vs 9).
+- **Uncached tokens are a tie (+1%).** The injected protocol and map add about 1.5k tokens of cache writes up front, and that is what the saved turns repay. On a 43-file repo with 3-to-6-step tasks there isn't more to win; the gap should widen on larger repos, which this benchmark doesn't cover.
+- **t1 is a wash on time** (16s vs 15s, within run-to-run spread of 12–24s).
+- t4 varies most (harness 184k–333k tokens): it is the only task where the agent sometimes reads extra files.
+- Before this change, the same t4 run cost 80k uncached tokens and 86s with the old defaults (the planner and reviewer ran in the background). With `--gates` the harness arm turns the plan and review gates back on, to measure what they cost.
+
 ## Pilot, 2026-10-07: a small sample only
+
+Run with plugin 0.1.0 defaults (planner for 3+ files, reviewer before finishing, review gate on); kept for history.
 
 **This is not the T20 result.** It is 4 task sessions plus 1 bootstrap: 2 tasks, 1 repeat each, run to check that the real pipeline works before spending about 37 sessions on a full run. One run per cell can't separate the harness from session noise, so treat the numbers below as a direction to check, not a finding.
 
@@ -52,5 +78,5 @@ Agent: claude · tasks: 2 · repeats: 1 · review gate: on
 ### What to run for T20
 
 Run `python3 bench/run.py --agent claude --repeats 3` over all 6 tasks: 37 sessions, roughly $10–15 at these prices. Also worth measuring:
-- `--no-review-gate`, to separate the gate's cost from the context's
+- `--gates` (harness arm with the plan and review gates on; they are off by default since 0.4.0), to measure what the gates cost
 - a run where the planner threshold is higher, since t4 suggests the 3-file rule is the expensive part

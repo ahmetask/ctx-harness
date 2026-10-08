@@ -66,7 +66,7 @@ def render(meta, rows):
     L = [f"# Benchmark {meta.get('run', '')}", ""]
     L.append(f"Agent: {meta.get('agent', '?')}" + (f" (model {meta['model']})" if meta.get("model") else "")
              + f" · tasks: {len(tasks)} · repeats: {meta.get('repeats', '?')}"
-             + f" · review gate: {'on' if meta.get('review_gate', True) else 'off'}")
+             + f" · plan/review gates: {'on' if meta.get('gates', False) else 'off'}")
     if meta.get("synthetic"):
         L += ["", "> Offline agent: token numbers are synthetic. This run checks the benchmark platform, "
                   "not the harness."]

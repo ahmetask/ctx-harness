@@ -37,7 +37,7 @@ Modes:
 - **harness:** `claude -p --plugin-dir plugins/ctx-harness`, with the repo's `.ctx/` present.
 - **baseline:** `claude -p` with `CTXH_DISABLED=1` and no `.ctx/`. It stays inert even if the plugin is installed user-wide, but its agents may still be listed in that case. For the cleanest baseline, run from a user config without ctx-harness installed.
 
-In both modes the prompt ends with a note that the run is non-interactive and any plan counts as approved. Without it, the harness protocol would wait for plan approval that never comes. `--no-review-gate` turns the Stop-hook review check off, if you want to measure the gate's cost separately. Each real run is killed after `--timeout` seconds (default 3600). `--max-turns` also passes each task's `max_turns` to `claude --max-turns`, if your CLI supports it.
+In both modes the prompt ends with a note that the run is non-interactive and any plan counts as approved. Without it, the harness protocol would wait for plan approval that never comes. The harness arm runs with the plugin's defaults (plan and review gates off); `--gates` turns both Stop-hook gates on, to measure what they cost. Each real run is killed after `--timeout` seconds (default 3600). `--max-turns` also passes each task's `max_turns` to `claude --max-turns`, if your CLI supports it.
 
 Real runs use `--permission-mode acceptEdits` and allow `Bash`, so the agent can run `go test` and `ctxh`. Each run happens in a throwaway directory under the system temp dir. Pass `--keep` to keep the per-run repos for inspection.
 
