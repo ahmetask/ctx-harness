@@ -763,6 +763,27 @@ class TranscriptFixtures(unittest.TestCase):
         self.assertEqual(t["ctx_misses"], ["ctxh q find charge_token"])
         self.assertEqual([c["cmd"] for c in t["failed_commands"]], ["python3 -m pytest tests/test_service.py -q"])
 
+    def test_compaction_adds_a_ledger_from_the_transcript(self):
+        tx = str(self.load("session-edit"))
+        cmds = self.repo.root / ".ctx" / "commands.json"
+        data = json.loads(cmds.read_text())
+        data["commands"].append({"cmd": "python3 -m pytest tests/test_service.py -q", "kind": "test", "verified": True})
+        cmds.write_text(json.dumps(data))
+        start = lambda source: self.repo.ctxh("hook-start", stdin=json.dumps(
+            {"source": source, "transcript_path": tx})).stdout
+        out = start("compact")
+        self.assertIn("Session ledger", out)
+        self.assertIn("Code files edited, in order: app/orders/service.py.", out)
+        self.assertIn("Last verified command run: `python3 -m pytest tests/test_service.py -q` FAILED: "
+                      "E   ModuleNotFoundError: No module named 'pytest'.", out)
+        self.assertIn("Subagents called: ctx-harness:scout x1.", out)
+        self.assertIn("Session ledger", start("resume"))
+        self.assertNotIn("Session ledger", start("startup"))  # startup output is unchanged
+        (self.repo.root / "empty.jsonl").write_text("")
+        quiet = self.repo.ctxh("hook-start", stdin=json.dumps(
+            {"source": "compact", "transcript_path": str(self.repo.root / "empty.jsonl")})).stdout
+        self.assertNotIn("Session ledger", quiet)  # nothing edited or run
+
     def test_gate_blocks_the_unreviewed_edit_and_passes_the_reviewed_one(self):
         blocked = self.repo.ctxh("hook-stop", stdin=json.dumps(
             {"session_id": "s1", "transcript_path": str(self.load("session-edit"))})).stdout
