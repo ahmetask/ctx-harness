@@ -38,7 +38,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
 | T22 | Don't repeat prompt hints within a session | context | P3 | done |
 | T23 | Session ledger on compaction when there is no plan | context | P2 | done |
-| T24 | Scoped learned lines, delivered with the hint | learning | P2 | todo |
+| T24 | Scoped learned lines, delivered with the hint | learning | P2 | done |
 | T25 | Usage evidence for pruning learned lines | learning | P3 | todo |
 | T26 | User redirects as a learning signal | learning | P3 | todo |
 | T27 | Screen shared traces before the curator reads them | learning | P3 | todo |
@@ -148,7 +148,7 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 - **Problem:** after compaction, `hook-start` restores the protocol and the map, and the plan's progress tail only when `.ctx/tasks/active.md` exists. Since 0.4.0 plans are opt-in, so most compacted sessions get no task state from the harness and rely on the compaction summary, which loses exact details such as which files were already edited and which validation command last failed. Kiro Crew prepends a work-ledger snapshot (goal, phase, next step, last 3 attempts) to each long-running cycle so it starts from durable state, not transcript memory (`session_ledger.render_snapshot`).
 - **Done when:** on source `compact` or `resume`, `hook-start` reads the event's transcript through the adapter and adds a ledger of at most 10 lines: code files edited (in order), the last run of a verified command from `commands.json` and whether it failed (first output line), the last 3 failed commands, and subagents called. It is a pure function of the trace, with no model call. It is shown only when the session edited files or ran commands, next to the plan note when one exists, without repeating it. Startup output is unchanged. A live `/compact` in the sandbox confirmed (2026-10-09, Claude Code 2.1.x, ~$0.40) that the transcript passed on `compact` still holds the pre-compaction tool calls, and a fixture test covers the rendering. The bench tasks are too short to compact, so measuring this needs a long task.
 
-### T24 · Scoped learned lines, delivered with the hint
+### T24 · Scoped learned lines, delivered with the hint (done; the bench measurement is not run, it costs money)
 - **Problem:** `.ctx/learned.md` holds the facts that cost real exploration, but nothing in a Claude Code session loads it. The protocol doesn't mention it, and only a generated map line points at it, so whether an agent reads it is luck. Kiro Crew gives each lesson an optional `repo_scope` and injects lessons ranked against the request, whole entries only, inside a budget, naming what it left out.
 - **Done when:** a learned line can start with a scope tag, `[<module>]` (a graph module) or `[*]`. `hook-start` injects the `[*]` lines, at most 5; over that, it names how many were left out and the file. When `prompt_hint` fires, it adds up to 2 lines scoped to the top hit's module, deduplicated per session with T22's record. `ctxh check` fails on a tag that is not a module. The curate prompt writes the tag. A test covers each path. Measure with a bench run where one learned line answers a task's gotcha.
 

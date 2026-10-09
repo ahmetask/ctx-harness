@@ -1277,6 +1277,9 @@ def cmd_check(_):
         phrasing(card.name, body)
     g = load_json(GRAPH)
     problems += card_module_problems(g) if g else []
+    if g:
+        problems += [f"learned.md: tag [{scope}] is not a module of this repo (use [*] or a module from `ctxh q module`)"
+                     for scope in dict.fromkeys(sc for sc, _ in learned_entries()) if scope != "*" and scope not in g["modules"]]
     if LEARNED.exists() and LEARNED.read_text().count("\n") > BUDGET["learned_lines"]:
         problems.append("learned.md over budget: consolidate or prune")
     print("\n".join(problems) or "ok: budgets respected, no dead paths")
@@ -1933,6 +1936,28 @@ def plan_resume_note(plan: Path, source="compact"):
     return "\n".join(note)
 
 
+LEARNED_GLOBAL = 5  # `[*]` learned lines injected at session start
+LEARNED_SCOPED = 2  # module-scoped learned lines added to a prompt hint
+LEARNED_TAG = re.compile(r"^\s*(?:[-*]\s*)?\[([^\]\s]+)\]\s*(\S.*)$")
+
+
+def learned_entries():
+    """(scope, text) of each tagged line in learned.md: scope is `*` or a module. Untagged lines are left to the reader."""
+    if not LEARNED.exists():
+        return []
+    return [(m.group(1), m.group(2).strip()) for m in map(LEARNED_TAG.match, LEARNED.read_text().splitlines()) if m]
+
+
+def global_learned_note():
+    lines = [t for scope, t in learned_entries() if scope == "*"]
+    if not lines:
+        return None
+    note = "Learned in past tasks (apply to the whole repo):\n" + "\n".join(f"- {t}" for t in lines[:LEARNED_GLOBAL])
+    if len(lines) > LEARNED_GLOBAL:
+        note += f"\n({len(lines) - LEARNED_GLOBAL} more in .ctx/learned.md)"
+    return note
+
+
 LEDGER_FILES = 6   # edited files named in the ledger
 LEDGER_FAILS = 3   # failed commands named in the ledger
 
@@ -2001,6 +2026,9 @@ def cmd_hook_start(_):
             out.append(plan_resume_note(active, event["source"]))
         else:
             out.append("Active plan exists: .ctx/tasks/active.md (read it first).")
+    learned = global_learned_note()
+    if learned:
+        out.append(learned)
     if event.get("source") in ("compact", "resume") and event.get("transcript"):
         ledger = session_ledger(event["transcript"])
         if ledger:
@@ -2036,16 +2064,25 @@ def prompt_hint(prompt, session=None):
     seen = (load_json(state, {}) or {}) if state else {}
     leads = [f"{f}:{line} {label}" for _, f, line, label in found]
     new = [l for l in leads if l not in seen.get("leads", [])]
-    card = CARDS / (g["files"][found[0][1]]["module"].replace("/", "-") + ".md")
+    module = g["files"][found[0][1]]["module"]
+    card = CARDS / (module.replace("/", "-") + ".md")
     card_new = card.exists() and str(card) not in seen.get("cards", [])
-    if not new and not card_new:
+    scoped = [t for scope, t in learned_entries() if scope == module]
+    gotchas = [t for t in scoped if t not in seen.get("learned", [])][:LEARNED_SCOPED]
+    if not new and not card_new and not gotchas:
         return None
     if state:
         write_json(state, {"leads": seen.get("leads", []) + new,
-                           "cards": seen.get("cards", []) + ([str(card)] if card_new else [])})
+                           "cards": seen.get("cards", []) + ([str(card)] if card_new else []),
+                           "learned": seen.get("learned", []) + gotchas})
     tail = f" Card: {card.relative_to(ROOT)}." if card_new else ""
-    return f"ctx-harness: keyword matches for this request (leads, not answers): {'; '.join(new)}.{tail}" if new else \
-        f"ctx-harness: relevant card for this request: {card.relative_to(ROOT)}."
+    if new:
+        out = f"ctx-harness: keyword matches for this request (leads, not answers): {'; '.join(new)}.{tail}"
+    elif card_new:
+        out = f"ctx-harness: relevant card for this request: {card.relative_to(ROOT)}."
+    else:
+        out = ""
+    return "\n".join(filter(None, [out] + [f"ctx-harness: learned in {module}: {t}" for t in gotchas]))
 
 
 def cmd_hook_prompt(_):
