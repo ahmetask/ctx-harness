@@ -392,6 +392,15 @@ class PromptHint(unittest.TestCase):
     def test_strong_match_points_at_the_code(self):
         self.assertIn("pkg/ledger.py:1 reconcile_balance", self.hook(self.ASK))
 
+    def test_repeat_in_a_session_is_silent_until_compact(self):
+        def run(cmd, **payload):
+            return self.repo.ctxh(cmd, env=self.off, stdin=json.dumps(payload)).stdout
+        self.assertIn("pkg/ledger.py:1", run("hook-prompt", prompt=self.ASK, session_id="s1"))
+        self.assertEqual(run("hook-prompt", prompt=self.ASK, session_id="s1"), "")
+        self.assertIn("pkg/ledger.py:1", run("hook-prompt", prompt=self.ASK, session_id="s2"))
+        run("hook-start", source="compact", session_id="s1")
+        self.assertIn("pkg/ledger.py:1", run("hook-prompt", prompt=self.ASK, session_id="s1"))
+
     def test_silent_when_weak_short_or_switched_off(self):
         self.assertEqual(self.hook("commit this and open a pr"), "")
         self.assertEqual(self.hook("thanks, that looks good"), "")
