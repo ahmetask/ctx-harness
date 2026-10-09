@@ -36,8 +36,14 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
 | T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | todo |
 | T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
+| T22 | Don't repeat prompt hints within a session | context | P3 | todo |
+| T23 | Session ledger on compaction when there is no plan | context | P2 | todo |
+| T24 | Scoped learned lines, delivered with the hint | learning | P2 | todo |
+| T25 | Usage evidence for pruning learned lines | learning | P3 | todo |
+| T26 | User redirects as a learning signal | learning | P3 | todo |
+| T27 | Screen shared traces before the curator reads them | learning | P3 | todo |
 
-Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest.
+Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest. For T22–T27: T22 → T23 → T24 (uses T22's per-session state) → T25 → T26 → T27.
 
 ---
 
@@ -129,3 +135,31 @@ Gemini CLI gets `adapters/gemini.py`: SessionStart, BeforeAgent and AfterAgent r
 
 ### T18 · Tool label and vendor-neutral token counting (done)
 Metric records carry `tool`. `ctxh stats` groups by tool and label, and pairs harness and baseline runs only within a tool. `ctxh usage --gateway <requests.jsonl> --tool <agent>` imports per-session usage from an LLM gateway log, with either Anthropic or OpenAI field names. See `.ctx/tasks/done/T18-tool-label.md`.
+
+## Ideas from Kiro Crew (2026-10-09)
+
+Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own context assembly and memory. These are the parts that fit a repo-scoped, stdlib-only harness. Left out on purpose: embeddings and vector memory (BM25 already answers concept queries, and Kiro's own code says its cosine admission threshold is not calibrated), user-preference consolidation (that is the agent's own memory, not repo context), and a budget table of shares (the injection is about 1.5k tokens and `ctxh check` already caps every file; revisit if T24 grows it).
+
+### T22 · Don't repeat prompt hints within a session
+- **Problem:** `prompt_hint` keeps no state. A follow-up prompt that matches the same module re-sends the same leads and card path, about 100 tokens each time, while they are still in context. Kiro Crew keeps a per-session record of the skill bodies it injected and sends a body again only after compaction (`ContextBuilder._dedup_triggered_bodies`).
+- **Done when:** `hook-prompt` records the leads and card it showed in `.ctx/tmp/hints/<session>.json`, leaves out leads already shown, and stays silent when nothing is new. `hook-start` clears the record on source `compact` and `clear`. Tests: the same prompt twice gives a silent second run; after a `compact` start it fires again.
+
+### T23 · Session ledger on compaction when there is no plan
+- **Problem:** after compaction, `hook-start` restores the protocol and the map, and the plan's progress tail only when `.ctx/tasks/active.md` exists. Since 0.4.0 plans are opt-in, so most compacted sessions get no task state from the harness and rely on the compaction summary, which loses exact details such as which files were already edited and which validation command last failed. Kiro Crew prepends a work-ledger snapshot (goal, phase, next step, last 3 attempts) to each long-running cycle so it starts from durable state, not transcript memory (`session_ledger.render_snapshot`).
+- **Done when:** on source `compact` or `resume`, `hook-start` reads the event's transcript through the adapter and adds a ledger of at most 10 lines: code files edited (in order), the last run of a verified command from `commands.json` and whether it failed (first output line), the last 3 failed commands, and subagents called. It is a pure function of the trace, with no model call. It is shown only when the session edited files or ran commands, next to the plan note when one exists, without repeating it. Startup output is unchanged. A live `/compact` in the sandbox confirms the transcript passed on `compact` still holds the pre-compaction tool calls, and a fixture test covers the rendering. The bench tasks are too short to compact, so measuring this needs a long task.
+
+### T24 · Scoped learned lines, delivered with the hint
+- **Problem:** `.ctx/learned.md` holds the facts that cost real exploration, but nothing in a Claude Code session loads it. The protocol doesn't mention it, and only a generated map line points at it, so whether an agent reads it is luck. Kiro Crew gives each lesson an optional `repo_scope` and injects lessons ranked against the request, whole entries only, inside a budget, naming what it left out.
+- **Done when:** a learned line can start with a scope tag, `[<module>]` (a graph module) or `[*]`. `hook-start` injects the `[*]` lines, at most 5; over that, it names how many were left out and the file. When `prompt_hint` fires, it adds up to 2 lines scoped to the top hit's module, deduplicated per session with T22's record. `ctxh check` fails on a tag that is not a module. The curate prompt writes the tag. A test covers each path. Measure with a bench run where one learned line answers a task's gotcha.
+
+### T25 · Usage evidence for pruning learned lines
+- **Problem:** curate step 4 says to remove learned lines that no recent trace touched, but nothing tells the curator which lines those are, so the step is a guess. Kiro Crew records when memories were accessed and decays them by age.
+- **Done when:** `ctxh signals` lists each learned line with the number of traces, and the latest date, that read or edited a path, or ran a command, named in backticks on that line. Lines with no such trace among the newest N are listed as prune candidates. The curate prompt points at that section. A test covers it.
+
+### T26 · User redirects as a learning signal
+- **Problem:** `signals` learns from files read, failed commands, empty index queries and coder notes, which the coder may skip. It misses the strongest signal: the user correcting the agent ("no, tax is computed in pricing, not orders"). Kiro Crew's consolidator extracts these implicit corrections into lessons, separately from explicit "remember this" requests.
+- **Done when:** the adapter's `read_session` also returns user prompt text with its position. The local trace keeps up to 5 user prompts that follow a code edit in the same session (first 200 characters each) as `redirects`. `shared_trace` drops them, as it drops command output. `signals` prints them under "user redirects after an edit", and the curator applies the existing promotion rule. A fixture test covers it, and the README privacy section says what is kept locally.
+
+### T27 · Screen shared traces before the curator reads them
+- **Problem:** with `CTXH_TRACE_SINK` set, `signals` prints commands, queries and paths from other machines straight into the curator's context, and the curator writes committed files from them. A command line can carry instruction-like text. Kiro Crew screens third-party text, drops matches with an audit record, and rewrites forged block markers before injecting anything.
+- **Done when:** `signals` drops shared-trace strings that match `IMPERATIVE` or a small injection pattern (for example "ignore previous instructions", "system prompt"), and prints how many it dropped. Local traces are not screened. A test covers it.
