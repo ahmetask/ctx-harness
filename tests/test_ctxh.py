@@ -816,6 +816,24 @@ class TranscriptFixtures(unittest.TestCase):
             {"source": "compact", "transcript_path": str(self.repo.root / "empty.jsonl")})).stdout
         self.assertNotIn("Session ledger", quiet)  # nothing edited or run
 
+    def test_signals_lists_learned_usage_and_prune_candidates(self):
+        (self.repo.root / ".ctx" / "learned.md").write_text(
+            "# Learned\n- [*] `app/orders/service.py` charges twice without the key.\n"
+            "- [*] `make legacy-deploy` needs VPN.\n- no reference on this line.\n")
+        traces = self.repo.root / ".ctx" / "traces"
+        traces.mkdir(parents=True, exist_ok=True)
+        for i in range(3):
+            (traces / f"t{i}.json").write_text(json.dumps({
+                "session": f"s{i}", "task": "x", "recorded_at": f"2026-10-0{i + 1}T10:00:00",
+                "files_read": ["app/orders/service.py"], "files_edited": [], "commands": ["python3 -m unittest"]}))
+        out = self.repo.ctxh("signals").stdout
+        self.assertIn("3x last 2026-10-03  - [*] `app/orders/service.py`", out)
+        self.assertIn("0x  - [*] `make legacy-deploy`", out)
+        self.assertNotIn("no reference on this line", out)
+        cold = out.split("prune candidates")[1]
+        self.assertIn("make legacy-deploy", cold)
+        self.assertNotIn("app/orders/service.py", cold)
+
     def test_gate_blocks_the_unreviewed_edit_and_passes_the_reviewed_one(self):
         blocked = self.repo.ctxh("hook-stop", stdin=json.dumps(
             {"session_id": "s1", "transcript_path": str(self.load("session-edit"))})).stdout

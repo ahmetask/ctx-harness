@@ -1725,6 +1725,44 @@ def cmd_stats(_):
             print("no net saving on paired tasks yet: the harness is not paying for itself on this repo")
 
 
+LEARNED_WINDOW = 20  # newest traces a learned line must show up in to be kept without a second look
+
+
+def learned_usage(traces, window=LEARNED_WINDOW):
+    """[(line, n_traces, latest_date, in_window)] for each learned line that names a path or command in backticks.
+
+    A trace uses a line when it read or edited a path named there (or ran a command containing a
+    named command). Lines with no backticked reference cannot be checked and are left out."""
+    if not LEARNED.exists():
+        return []
+    traces = sorted(traces, key=lambda t: t.get("recorded_at") or "")
+    newest = {id(t) for t in traces[-window:]}
+    rows = []
+    for raw in LEARNED.read_text().splitlines():
+        line = raw.strip()
+        refs = re.findall(r"`([^`]+)`", line)
+        if not line.startswith(("-", "*")) or not refs:
+            continue
+        used = [t for t in traces
+                if any(r in " ".join([*t.get("files_read", []), *t.get("files_edited", []), *t.get("commands", [])])
+                       for r in refs)]
+        latest = max((t.get("recorded_at") or "" for t in used), default="")
+        rows.append((line, len(used), latest[:10], any(id(t) in newest for t in used)))
+    return rows
+
+
+def print_learned_usage(traces):
+    rows = learned_usage(traces)
+    if not rows:
+        return
+    print(f"\nlearned lines naming a path or command, by use in traces (window: newest {LEARNED_WINDOW}):")
+    for line, n, latest, _ in rows:
+        print(f"  {n}x{' last ' + latest if n else ''}  {line[:100]}")
+    cold = [line for line, _, _, recent in rows if not recent]
+    print(f"prune candidates (no trace among the newest {LEARNED_WINDOW} touched them):")
+    print("\n".join(f"  {line[:100]}" for line in cold) or "  none")
+
+
 def cmd_signals(_):
     traces = [load_json(p) for p in sorted(TRACES.glob("*.json"))] if TRACES.exists() else []
     local = {t.get("session") for t in traces if t}
@@ -1756,6 +1794,7 @@ def cmd_signals(_):
     miss = Counter(m for t in traces for m in t["ctx_misses"])
     print("\nindex queries that came back empty (index gap or wrong mental model):")
     print("\n".join(f"  {n}x {c}" for c, n in miss.most_common(10)) or "  none")
+    print_learned_usage(traces)
     notes = CTX / "tasks" / "notes.md"
     if notes.exists() and notes.read_text().strip():
         print("\ncoder notes pending review: .ctx/tasks/notes.md")
