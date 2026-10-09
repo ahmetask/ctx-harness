@@ -36,7 +36,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
 | T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | todo |
 | T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
-| T22 | Don't repeat prompt hints within a session | context | P3 | todo |
+| T22 | Don't repeat prompt hints within a session | context | P3 | done |
 | T23 | Session ledger on compaction when there is no plan | context | P2 | todo |
 | T24 | Scoped learned lines, delivered with the hint | learning | P2 | todo |
 | T25 | Usage evidence for pruning learned lines | learning | P3 | todo |
@@ -140,7 +140,7 @@ Metric records carry `tool`. `ctxh stats` groups by tool and label, and pairs ha
 
 Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own context assembly and memory. These are the parts that fit a repo-scoped, stdlib-only harness. Left out on purpose: embeddings and vector memory (BM25 already answers concept queries, and Kiro's own code says its cosine admission threshold is not calibrated), user-preference consolidation (that is the agent's own memory, not repo context), and a budget table of shares (the injection is about 1.5k tokens and `ctxh check` already caps every file; revisit if T24 grows it).
 
-### T22 · Don't repeat prompt hints within a session
+### T22 · Don't repeat prompt hints within a session (done)
 - **Problem:** `prompt_hint` keeps no state. A follow-up prompt that matches the same module re-sends the same leads and card path, about 100 tokens each time, while they are still in context. Kiro Crew keeps a per-session record of the skill bodies it injected and sends a body again only after compaction (`ContextBuilder._dedup_triggered_bodies`).
 - **Done when:** `hook-prompt` records the leads and card it showed in `.ctx/tmp/hints/<session>.json`, leaves out leads already shown, and stays silent when nothing is new. `hook-start` clears the record on source `compact` and `clear`. Tests: the same prompt twice gives a silent second run; after a `compact` start it fires again.
 

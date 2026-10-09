@@ -1942,6 +1942,8 @@ def cmd_hook_start(_):
             ADAPTER.emit_context(render_prompt("ctx-harness: this repo has no harness context (.ctx/). "
                                                "If the user wants it, the build skill ({{command:build}}) creates it."))
         return
+    if event.get("source") in ("compact", "clear") and event.get("session"):
+        (TMP / "hints" / f"{event['session']}.json").unlink(missing_ok=True)  # the leads left the context
     out = []
     proto = PROTOCOL_OVERRIDE if PROTOCOL_OVERRIDE.exists() else PROTOCOL_DEFAULT
     if proto.exists():
@@ -1976,11 +1978,12 @@ HINT_HITS = 3
 HINT_MIN_TERMS = 5  # "commit this and open a pr" has words but no subject
 
 
-def prompt_hint(prompt):
+def prompt_hint(prompt, session=None):
     """Starting points for this request, from `q search` on its words, or None when the match is weak.
 
     Silent on small repos (two `cat`s load everything), on prompts too short to search, and with
-    CTXH_HINTS=0. Costs about 100 tokens when it fires."""
+    CTXH_HINTS=0. Costs about 100 tokens when it fires. With a session, leads and cards already
+    shown are left out (they are still in context until a compact or clear), and nothing new means silence."""
     if env("HINTS") == "0" or not prompt or len(terms(prompt)) < HINT_MIN_TERMS:
         return None
     g = load_json(GRAPH)
@@ -1989,10 +1992,20 @@ def prompt_hint(prompt):
     found = [h for h in keyword_search(g, prompt, HINT_HITS * 3) if g["files"][h[1]]["role"] != "docs"][:HINT_HITS]
     if not found or found[0][0] < HINT_MIN_SCORE:
         return None
-    hits = "; ".join(f"{f}:{line} {label}" for _, f, line, label in found)
+    state = TMP / "hints" / f"{session}.json" if session else None
+    seen = (load_json(state, {}) or {}) if state else {}
+    leads = [f"{f}:{line} {label}" for _, f, line, label in found]
+    new = [l for l in leads if l not in seen.get("leads", [])]
     card = CARDS / (g["files"][found[0][1]]["module"].replace("/", "-") + ".md")
-    tail = f" Card: {card.relative_to(ROOT)}." if card.exists() else ""
-    return f"ctx-harness: keyword matches for this request (leads, not answers): {hits}.{tail}"
+    card_new = card.exists() and str(card) not in seen.get("cards", [])
+    if not new and not card_new:
+        return None
+    if state:
+        write_json(state, {"leads": seen.get("leads", []) + new,
+                           "cards": seen.get("cards", []) + ([str(card)] if card_new else [])})
+    tail = f" Card: {card.relative_to(ROOT)}." if card_new else ""
+    return f"ctx-harness: keyword matches for this request (leads, not answers): {'; '.join(new)}.{tail}" if new else \
+        f"ctx-harness: relevant card for this request: {card.relative_to(ROOT)}."
 
 
 def cmd_hook_prompt(_):
@@ -2001,7 +2014,7 @@ def cmd_hook_prompt(_):
     if env("DISABLED") == "1" or not opted_in():
         return
     lines = []
-    hint = prompt_hint(event.get("prompt"))
+    hint = prompt_hint(event.get("prompt"), event.get("session"))
     if hint:
         lines.append(hint)
     if gate_on("PLAN_GATE") or gate_on("REVIEW_GATE"):  # the reminder exists to avoid a gate's blocked turn
