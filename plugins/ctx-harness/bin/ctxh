@@ -855,6 +855,16 @@ def cmd_build_index(args):
 
 
 # ---------------------------------------------------------------- skeleton
+MAP_DEPS = 4  # dependencies named per module in the map; `ctxh q module` has the rest
+MAP_COCHANGE_MIN = 3  # two shared commits is coincidence as often as coupling; `ctxh q cochange` still lists them
+
+
+def key_file_order(node):
+    """Sort key for a module's key files. Rank is per package in Go, so every file of one ties on it;
+    break the tie by fix history, then churn, then size of the API."""
+    return (-node.get("rank", 0), -len(node.get("risk", [])), -node.get("churn", 0), -len(node.get("symbols", [])))
+
+
 def cmd_skeleton(_):
     g = need_graph()
     cmds = (load_json(COMMANDS, {}) or {}).get("commands", [])
@@ -876,14 +886,16 @@ def cmd_skeleton(_):
             "|---|---|---|---|"]
     for m in src_mods[:12]:
         key = sorted([f for f, n in files.items() if n["module"] == m and n["role"] == "src"],
-                     key=lambda f: -files[f].get("rank", 0))[:3]
+                     key=lambda f: (key_file_order(files[f]), f))[:3]
         key = ", ".join(k.rsplit("/", 1)[-1] for k in key)
-        out.append(f"| {m} | TODO(llm) | {key} | {', '.join(mods[m]['deps']) or '-'} |")
+        deps = sorted(mods[m]["deps"], key=lambda d: (-mods.get(d, {}).get("rank", 0), d))
+        shown = ", ".join(deps[:MAP_DEPS]) + (f" +{len(deps) - MAP_DEPS} more" if len(deps) > MAP_DEPS else "")
+        out.append(f"| {m} | TODO(llm) | {key} | {shown or '-'} |")
     coupling = []
     for f, n in files.items():
         for other, c in n.get("cochange", []):
             o = files.get(other, {})
-            if f < other and o.get("module") != n["module"] and n["role"] == o.get("role") == "src":
+            if c >= MAP_COCHANGE_MIN and f < other and o.get("module") != n["module"] and n["role"] == o.get("role") == "src":
                 linked = other in n["imports"] or f in o.get("imports", [])
                 coupling.append((c, f, other, "" if linked else ", no import link"))
     if coupling:
@@ -1145,7 +1157,7 @@ def cmd_card_draft(args):
         sys.exit(f"{card.relative_to(ROOT)} exists: refresh it in place instead")
     files = g["files"]
     mine = sorted((f for f, n in files.items() if n["module"] == mod and n["role"] == "src"),
-                  key=lambda f: -files[f].get("rank", 0))
+                  key=lambda f: (key_file_order(files[f]), f))
     body = ["TODO(llm) one line on what the module owns.", "", "## Invariants",
             "- TODO(llm) rules that hold in code, each naming the symbol that enforces it (read only the top files:"
             f" {', '.join(f.rsplit('/', 1)[-1] for f in mine[:3])}).", ""]
