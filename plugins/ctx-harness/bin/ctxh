@@ -1933,6 +1933,42 @@ def plan_resume_note(plan: Path, source="compact"):
     return "\n".join(note)
 
 
+LEDGER_FILES = 6   # edited files named in the ledger
+LEDGER_FAILS = 3   # failed commands named in the ledger
+
+
+def session_ledger(path: Path):
+    """What this session did so far, at most 10 lines, or None when it edited nothing and ran nothing.
+
+    A pure function of the transcript's trace (no model call): the compaction summary keeps the gist
+    but loses exact details such as which files were already edited and which command last failed."""
+    trace = ADAPTER.read_session(path) if path else None
+    calls = [c for c in trace["calls"] if c["side"] == "main"] if trace else []
+    files = session_edits(path)["files"] if calls else []
+    shell = [c for c in calls if c["kind"] == "shell"]
+    if not files and not shell:
+        return None
+    first_line = lambda c: (c["output"].strip().splitlines() or ["(no output)"])[0][:120]
+    out = ["Session ledger (from the transcript, before the context was cut):"]
+    if files:
+        more = f" and {len(files) - LEDGER_FILES} more" if len(files) > LEDGER_FILES else ""
+        out.append(f"- Code files edited, in order: {', '.join(files[:LEDGER_FILES])}{more}.")
+    verified = [c["cmd"] for c in (load_json(COMMANDS, {}) or {}).get("commands", []) if c.get("verified")]
+    ran = [c for c in shell if any(v in c["command"] for v in verified)]
+    if ran:
+        last = ran[-1]
+        state = f"FAILED: {first_line(last)}" if last["error"] else "passed"
+        out.append(f"- Last verified command run: `{last['command'][:100]}` {state}.")
+    failed = [c for c in shell if c["error"]][-LEDGER_FAILS:]
+    if failed:
+        out.append("- Last failed commands:")
+        out += [f"  - `{c['command'][:100]}` -> {first_line(c)}" for c in failed]
+    agents = Counter(str(c["agent"] or "general") for c in calls if c["kind"] == "subagent")
+    if agents:
+        out.append("- Subagents called: " + ", ".join(f"{k} x{n}" for k, n in agents.items()) + ".")
+    return "\n".join(out)
+
+
 def cmd_hook_start(_):
     event = ADAPTER.read_event(sys.stdin) or {}
     if env("DISABLED") == "1":
@@ -1965,6 +2001,10 @@ def cmd_hook_start(_):
             out.append(plan_resume_note(active, event["source"]))
         else:
             out.append("Active plan exists: .ctx/tasks/active.md (read it first).")
+    if event.get("source") in ("compact", "resume") and event.get("transcript"):
+        ledger = session_ledger(event["transcript"])
+        if ledger:
+            out.append(ledger)
     ADAPTER.emit_context("\n\n".join(out))
 
 
