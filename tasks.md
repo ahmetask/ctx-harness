@@ -41,7 +41,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T24 | Scoped learned lines, delivered with the hint | learning | P2 | done |
 | T25 | Usage evidence for pruning learned lines | learning | P3 | done |
 | T26 | User redirects as a learning signal | learning | P3 | done |
-| T27 | Screen shared traces before the curator reads them | learning | P3 | todo |
+| T27 | Screen shared traces before the curator reads them | learning | P3 | done |
 
 Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest. For T22–T27: T22 → T23 → T24 (uses T22's per-session state) → T25 → T26 → T27.
 
@@ -160,6 +160,6 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 - **Problem:** `signals` learns from files read, failed commands, empty index queries and coder notes, which the coder may skip. It misses the strongest signal: the user correcting the agent ("no, tax is computed in pricing, not orders"). Kiro Crew's consolidator extracts these implicit corrections into lessons, separately from explicit "remember this" requests.
 - **Done when:** the adapter's `read_session` also returns user prompt text with its position. The local trace keeps up to 5 user prompts that follow a code edit in the same session (first 200 characters each) as `redirects`. `shared_trace` drops them, as it drops command output. `signals` prints them under "user redirects after an edit", and the curator applies the existing promotion rule. A fixture test covers it, and the README privacy section says what is kept locally.
 
-### T27 · Screen shared traces before the curator reads them
+### T27 · Screen shared traces before the curator reads them (done)
 - **Problem:** with `CTXH_TRACE_SINK` set, `signals` prints commands, queries and paths from other machines straight into the curator's context, and the curator writes committed files from them. A command line can carry instruction-like text. Kiro Crew screens third-party text, drops matches with an audit record, and rewrites forged block markers before injecting anything.
 - **Done when:** `signals` drops shared-trace strings that match `IMPERATIVE` or a small injection pattern (for example "ignore previous instructions", "system prompt"), and prints how many it dropped. Local traces are not screened. A test covers it.
