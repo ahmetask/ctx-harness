@@ -232,7 +232,7 @@ By default traces stay in each machine's `.ctx/traces/`, so the curator learns f
 
 `<repo>` is `CTXH_TRACE_REPO`, or the `origin` URL with any credentials removed (`github.com_acme_shop`). Sending waits at most 3 seconds and never fails a session. An unreachable store prints one warning and the local trace is still written. With the variable unset, nothing changes.
 
-**Privacy.** A shared trace holds repo-relative paths of files read and edited, the shell commands the agent ran (first 200 characters each), the `ctxh q` queries, subagent names, the task label and timestamps. It never holds file contents or command output: the failure output kept in local traces is dropped before sending. Commands can still contain anything typed on a command line, such as a token passed as an argument, so point the sink only at a store your team already trusts with that.
+**Privacy.** The local trace (`.ctx/traces/`, gitignored) also keeps up to 5 of your prompts that came after the agent's first code edit, 200 characters each, as `redirects`; `ctxh signals` prints them so the curator can promote a correction. They are never shared. A shared trace holds repo-relative paths of files read and edited, the shell commands the agent ran (first 200 characters each), the `ctxh q` queries, subagent names, the task label and timestamps. It never holds file contents or command output: the failure output kept in local traces is dropped before sending. Commands can still contain anything typed on a command line, such as a token passed as an argument, so point the sink only at a store your team already trusts with that.
 
 ## Automating curation
 
