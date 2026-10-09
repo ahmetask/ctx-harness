@@ -1772,10 +1772,39 @@ def print_learned_usage(traces):
     print("\n".join(f"  {line[:100]}" for line in cold) or "  none")
 
 
+INJECTION = re.compile(r"ignore (all |any )?(previous|prior|above) (instructions|prompts?)|disregard (the |all )?(previous|prior|above)|"
+                       r"system prompt|you are now|new instructions:|</?(system|assistant|human|instructions?)>", re.I)
+
+
+def screen_shared(traces):
+    """Copies of traces from other machines without strings that read as instructions, and how many were dropped.
+
+    Paths, commands and queries come from teammates' machines and end up in the curator's context, which writes
+    committed files. A string that matches IMPERATIVE or INJECTION is dropped, not rewritten."""
+    dropped = 0
+
+    def ok(text):
+        nonlocal dropped
+        bad = bool(IMPERATIVE.search(text) or INJECTION.search(text))
+        dropped += bad
+        return not bad
+
+    kept = []
+    for t in traces:
+        t = dict(t)
+        for k in ("files_read", "files_edited", "commands", "ctx_queries", "ctx_misses"):
+            t[k] = [x for x in t.get(k) or [] if not isinstance(x, str) or ok(x)]
+        t["failed_commands"] = [x for x in t.get("failed_commands") or [] if ok(str(x.get("cmd", "")))]
+        t["subagents"] = {k: v for k, v in (t.get("subagents") or {}).items() if ok(str(k))}
+        kept.append(t)
+    return kept, dropped
+
+
 def cmd_signals(_):
     traces = [load_json(p) for p in sorted(TRACES.glob("*.json"))] if TRACES.exists() else []
     local = {t.get("session") for t in traces if t}
     shared = [t for t in sink_pull() if t.get("session") not in local]  # a session counts once
+    shared, screened = screen_shared(shared)
     traces = [t for t in traces + shared if t and t.get("task") not in OVERHEAD_TASKS]
     for t in traces:
         for k in ("files_read", "failed_commands", "ctx_queries", "ctx_misses", "redirects"):
@@ -1790,6 +1819,8 @@ def cmd_signals(_):
     reads = Counter(f for t in traces for f in set(t["files_read"]))
     n_shared = sum(1 for t in traces if t.get("session") not in local)
     print(f"{len(traces)} traces" + (f" ({n_shared} from the shared sink)" if n_shared else ""))
+    if screened:
+        print(f"dropped {screened} shared-trace strings that read as instructions (not shown below)")
     print("\nfiles needed in >=3 tasks but not mentioned in map/cards/learned:")
     hits = [(n, f) for f, n in reads.items() if n >= 3 and f.rsplit("/", 1)[-1] not in known]
     print("\n".join(f"  {n}x {f}" for n, f in sorted(hits, reverse=True)[:10]) or "  none")
