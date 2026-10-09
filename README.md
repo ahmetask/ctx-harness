@@ -6,7 +6,7 @@ Three properties:
 
 - **Automatic.** Agents build the context and keep it fresh through hooks. Nobody writes docs by hand.
 - **Repository-agnostic.** It works from signals every repo has: manifests, CI files, imports and git history. It doesn't depend on existing documentation.
-- **Cheaper than a plain session.** A small map is always loaded and everything else is pulled on demand through a zero-token index. Every session records its token usage, so you can measure the saving against a run with the harness off.
+- **Fewer steps, about the same cost, on the demo.** A small map is always loaded and everything else is pulled on demand through a zero-token index. On the 43-file demo repo the harness took a third fewer steps than a plain session and cost the same per passing task (see [docs/benchmark.md](docs/benchmark.md)); larger repos are not measured yet. Every session records its token usage, so you can measure it on your own repo against a run with the harness off.
 
 ## Install
 

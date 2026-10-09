@@ -1,5 +1,50 @@
 # Benchmark results
 
+## Full run, 2026-10-09: all six tasks, plus a cards ablation and a learned-line check
+
+Model `claude-sonnet-5-5`, harness with gates off, the committed `bench/demo/ctx`, 3 repeats per task. Same demo repo as below (43 Go files), engine at main after T22-T27.
+
+Command: `python3 bench/run.py --agent claude --repeats 3 --modes baseline,harness --ctx-from bench/demo/ctx`. 36 sessions, $4.72.
+
+| mode | pass | median tokens | uncached | median steps | cost | cost per passing task |
+|---|---|---|---|---|---|---|
+| baseline | 18/18 | 230.2k | 18.1k | 6.0 | $2.44 | $0.136 |
+| harness | 17/18 | 217.3k | 18.0k | 4.5 | $2.28 | $0.134 |
+
+| task | baseline (median tokens, steps) | harness | change |
+|---|---|---|---|
+| t1 locate | 156.8k, 4 | 123.3k, 2 | -21% |
+| t2 fixed coupon | 292.9k, 9 | 222.1k, 4 | -24% |
+| t3 cancel stock | 164.2k, 6 | 213.1k, 5 | +30% |
+| t4 refunds | 368.9k, 7 | 388.5k, 7 | +5% |
+| t5 price filter | 390.1k, 13 | 306.3k, 6 | -21% |
+| t6 JPY | 206.0k, 4 | 172.2k, 4 (2/3 passed) | -16% |
+
+Reading it:
+- **On cost the harness is about break-even** (-1% per passing task), and it takes fewer steps (4.5 vs 6.0 median; 81 vs 123 summed over the 18 runs each). It saves tokens on locate, bugfix-with-a-clear-pointer and feature tasks, and costs more on t3 and t4, where the cards and map point at the right module but the agent still has to find the second place (stock release, the email template).
+- **The one harness failure** was a t6 run whose hidden money test failed (`go test -run Hidden ./internal/money/`). With 3 repeats that is one run; I did not investigate whether the context contributed.
+- **Uncached tokens are the same** in both modes, so the saving is in cached reads from fewer steps, which bill at a lower rate. Cost per passing task is the fairer headline.
+
+### Cards ablation
+
+Same protocol, harness only, with `cards/` deleted from the context (the map stays). 18 sessions, $2.21.
+
+| context | pass | median tokens | median steps | cost | cost per passing task |
+|---|---|---|---|---|---|
+| map + cards | 17/18 | 217.3k | 4.5 | $2.28 | $0.134 |
+| map only | 18/18 | 193.2k | 3.5 | $2.21 | $0.123 |
+
+Per task, map only was cheaper on t3 (168k vs 213k), t4 (334k vs 389k) and t5 (218k vs 306k), the same on t1 and t6, and dearer on t2 (265k vs 222k). At three repeats these gaps are within the run-to-run spread (t4 and t5 IQRs overlap), so the honest reading is: **on a 43-file repo the cards do not pay for themselves yet, and they might cost a little.** I would not drop them on this evidence (the map alone is enough to find things in a repo this small), but the case for cards rests on larger repos, which this run does not cover.
+
+### Learned line check (T24)
+
+t2 x3, map only plus one scoped learned line that states the answer (`[internal/pricing]` fixed coupons apply before tax, `Engine.Quote` subtracts after). The prompt hint delivered it in all three sessions (found in the transcripts). 3/3 passed at 265.1k median tokens and 5 steps, $0.40, the same as map-only without the line (265.2k, 5 steps). So delivery works, but on this task the agent already finds the fix in about five steps and the line saved nothing. A task where the gotcha is hard to infer from the code would be a fairer test.
+
+### Caveats
+- 3 repeats per cell, one model, one small repo. Differences under about 15% are noise here (see the t4 spread in the earlier runs).
+- The baseline ran with `CTXH_DISABLED=1`; the plugin's agents may still be listed if it is installed user-wide.
+- Not run: a large-repo benchmark, which is where a map and retrieval hints should matter most.
+
 ## Four arms, 2026-10-08: baseline, Graphify, harness, harness + Graphify
 
 Same protocol as the rerun below (t1, t2, t4 × 3 repeats, harness 0.4.0 with gates off and the committed `bench/demo/ctx`), now with four arms. 36 sessions, about $4.83 in total, model `claude-sonnet-5-5`, Claude Code 2.1.294, Graphify 0.9.80 (PyPI `graphifyy`). All 36 passed their hidden checks and the regression suite.
