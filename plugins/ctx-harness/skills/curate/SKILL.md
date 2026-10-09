@@ -21,7 +21,7 @@ If `.ctx/` does not exist, stop and point the user to `/ctx-harness:build`.
 Run `ctxh signals` and read `.ctx/tasks/notes.md` if present. Promote a fact into `.ctx/learned.md` (or into the relevant card) only when:
 - it recurred (a file needed in 3+ tasks, a command that failed 2+ times, a repeated empty index query), or a reviewer or coder note gives concrete evidence, and
 - it cannot be cheaply inferred from code.
-Write each as one factual line with its evidence. Then remove the notes you processed.
+Write each as one factual line with its evidence, starting with a scope tag: `[*]` when it applies to the whole repo (loaded at every session start, so keep those few, at most 5), or `[<module>]` with a module name from the map (shown only when a request matches that module). Then remove the notes you processed.
 
 Empty index queries mean either a gap in `ctxh` (report it to the plugin maintainers) or a misleading name in the code; a card line can fix the latter.
 

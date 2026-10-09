@@ -209,7 +209,7 @@ class CardsAndHooks(unittest.TestCase):
         self.assertIn("anchors not stamped", r.stdout)
         self.repo.ctxh("anchor", str(self.card))
         self.assertRegex(self.card.read_text(), r"app/orders/service.py: [0-9a-f]{12}")
-        self.assertIn("ok", self.repo.ctxh("check").stdout)
+        self.assertIn("ok", self.repo.ctxh("check", check=False).stdout)
 
     def test_ready_blocks_until_map_is_filled_then_reports_warnings(self):
         ctx = self.repo.root / ".ctx"
@@ -400,6 +400,38 @@ class PromptHint(unittest.TestCase):
         self.assertIn("pkg/ledger.py:1", run("hook-prompt", prompt=self.ASK, session_id="s2"))
         run("hook-start", source="compact", session_id="s1")
         self.assertIn("pkg/ledger.py:1", run("hook-prompt", prompt=self.ASK, session_id="s1"))
+
+    def learned(self, *lines):
+        (self.repo.root / ".ctx" / "learned.md").write_text("# Learned\n" + "\n".join(lines) + "\n")
+
+    def module_of_ledger(self):
+        return json.loads((self.repo.root / ".ctx" / "graph.json").read_text())["files"]["pkg/ledger.py"]["module"]
+
+    def test_scoped_learned_line_rides_the_hint_once_per_session(self):
+        m = self.module_of_ledger()
+        self.learned(f"- [{m}] Settlements post twice unless reconciled first.", "- [other] not this module")
+        run = lambda sid: self.repo.ctxh("hook-prompt", env=self.off, stdin=json.dumps(
+            {"prompt": self.ASK, "session_id": sid})).stdout
+        first = run("s1")
+        self.assertIn(f"learned in {m}: Settlements post twice unless reconciled first.", first)
+        self.assertNotIn("not this module", first)
+        self.assertEqual(run("s1"), "")  # leads, card and learned line were all shown already
+        self.assertIn("Settlements post twice", run("s2"))
+
+    def test_global_learned_lines_load_at_start_capped_at_five(self):
+        self.learned(*[f"- [*] global rule {i}" for i in range(7)], "- [pkg] scoped only", "- untagged")
+        out = self.repo.ctxh("hook-start", stdin="{}").stdout
+        self.assertIn("- global rule 4", out)
+        self.assertNotIn("global rule 5", out)
+        self.assertIn("(2 more in .ctx/learned.md)", out)
+        self.assertNotIn("scoped only", out)
+        self.assertNotIn("untagged", out)
+
+    def test_check_rejects_a_tag_that_is_not_a_module(self):
+        self.learned("- [*] fine", f"- [{self.module_of_ledger()}] fine too")
+        self.assertNotIn("is not a module", self.repo.ctxh("check", check=False).stdout)
+        self.learned("- [nonexistent/mod] bad tag")
+        self.assertIn("tag [nonexistent/mod] is not a module", self.repo.ctxh("check", check=False).stdout)
 
     def test_silent_when_weak_short_or_switched_off(self):
         self.assertEqual(self.hook("commit this and open a pr"), "")
