@@ -26,7 +26,7 @@ Write each as one factual line with its evidence, starting with a scope tag: `[*
 Empty index queries mean either a gap in `ctxh` (report it to the plugin maintainers) or a misleading name in the code; a card line can fix the latter.
 
 ## 4. Prune and verify
-- Remove learned lines that no recent trace touched and that a probe no longer needs.
+- Remove learned lines that no recent trace touched and that a probe no longer needs. `ctxh signals` lists each learned line that names a path or command with how many traces used it, and the prune candidates; a line with no backticked path or command is not listed, so judge it yourself.
 - `ctxh check` must pass. Budgets are hard limits: consolidate rather than exceed them.
 
 ## 5. Report

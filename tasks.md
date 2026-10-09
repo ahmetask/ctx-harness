@@ -39,7 +39,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T22 | Don't repeat prompt hints within a session | context | P3 | done |
 | T23 | Session ledger on compaction when there is no plan | context | P2 | done |
 | T24 | Scoped learned lines, delivered with the hint | learning | P2 | done |
-| T25 | Usage evidence for pruning learned lines | learning | P3 | todo |
+| T25 | Usage evidence for pruning learned lines | learning | P3 | done |
 | T26 | User redirects as a learning signal | learning | P3 | todo |
 | T27 | Screen shared traces before the curator reads them | learning | P3 | todo |
 
@@ -152,7 +152,7 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 - **Problem:** `.ctx/learned.md` holds the facts that cost real exploration, but nothing in a Claude Code session loads it. The protocol doesn't mention it, and only a generated map line points at it, so whether an agent reads it is luck. Kiro Crew gives each lesson an optional `repo_scope` and injects lessons ranked against the request, whole entries only, inside a budget, naming what it left out.
 - **Done when:** a learned line can start with a scope tag, `[<module>]` (a graph module) or `[*]`. `hook-start` injects the `[*]` lines, at most 5; over that, it names how many were left out and the file. When `prompt_hint` fires, it adds up to 2 lines scoped to the top hit's module, deduplicated per session with T22's record. `ctxh check` fails on a tag that is not a module. The curate prompt writes the tag. A test covers each path. Measure with a bench run where one learned line answers a task's gotcha.
 
-### T25 · Usage evidence for pruning learned lines
+### T25 · Usage evidence for pruning learned lines (done)
 - **Problem:** curate step 4 says to remove learned lines that no recent trace touched, but nothing tells the curator which lines those are, so the step is a guess. Kiro Crew records when memories were accessed and decays them by age.
 - **Done when:** `ctxh signals` lists each learned line with the number of traces, and the latest date, that read or edited a path, or ran a command, named in backticks on that line. Lines with no such trace among the newest N are listed as prune candidates. The curate prompt points at that section. A test covers it.
 
