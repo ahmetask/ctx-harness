@@ -37,7 +37,7 @@ def child_env(root):
 
 
 def read_event(stream):
-    """A hook's stdin payload -> {"session", "transcript", "source"}, or None if unreadable.
+    """A hook's stdin payload -> {"session", "transcript", "source", "prompt"}, or None if unreadable.
 
     source (SessionStart only) is startup, resume or clear; Gemini CLI has no compaction start."""
     try:
@@ -48,7 +48,8 @@ def read_event(stream):
         return None
     tp = payload.get("transcript_path")
     return {"session": payload.get("session_id"), "transcript": Path(tp).expanduser() if tp else None,
-            "source": payload.get("source")}
+            "source": payload.get("source"),
+            "prompt": payload.get("prompt")}
 
 
 def emit_context(text):

@@ -367,6 +367,47 @@ class LeanDefaults(unittest.TestCase):
         self.assertLess(len(start), 7000)  # protocol + map is paid for on every turn
 
 
+class PromptHint(unittest.TestCase):
+    ASK = "Where do we reconcile the ledger balance after a settlement is posted to the customer?"
+
+    def setUp(self):
+        self.repo = Repo()
+        python_app(self.repo)
+        for i in range(16):
+            write(self.repo.root, f"pkg/mod{i}.py", f"def helper_{i}():\n    return {i}\n")
+        write(self.repo.root, "pkg/ledger.py", """
+            def reconcile_balance(ledger, settlement):
+                \"\"\"Reconcile the ledger balance after a settlement is posted.\"\"\"
+                return ledger
+        """)
+        self.repo.ctxh("build-index")
+        self.off = {"CTXH_PLAN_GATE": "", "CTXH_REVIEW_GATE": ""}
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def hook(self, prompt, **env):
+        return self.repo.ctxh("hook-prompt", env={**self.off, **env}, stdin=json.dumps({"prompt": prompt})).stdout
+
+    def test_strong_match_points_at_the_code(self):
+        self.assertIn("pkg/ledger.py:1 reconcile_balance", self.hook(self.ASK))
+
+    def test_silent_when_weak_short_or_switched_off(self):
+        self.assertEqual(self.hook("commit this and open a pr"), "")
+        self.assertEqual(self.hook("thanks, that looks good"), "")
+        self.assertEqual(self.hook(self.ASK, CTXH_HINTS="0"), "")
+
+    def test_silent_on_a_small_repo(self):
+        small = Repo()
+        try:
+            python_app(small)
+            small.ctxh("build-index")
+            out = small.ctxh("hook-prompt", env=self.off, stdin=json.dumps({"prompt": "Where does the retry wrapper give up after attempts"})).stdout
+            self.assertEqual(out, "")
+        finally:
+            small.cleanup()
+
+
 class Polyglot(unittest.TestCase):
     def test_typescript_and_nested_go_module(self):
         repo = Repo()
