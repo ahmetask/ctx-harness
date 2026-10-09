@@ -1971,12 +1971,39 @@ def gate_on(name):
     return env(name) == "1"
 
 
+HINT_MIN_SCORE = 1.4  # BM25 of the best hit: below this the match is a coincidence of words, not a lead
+HINT_HITS = 3
+HINT_MIN_TERMS = 5  # "commit this and open a pr" has words but no subject
+
+
+def prompt_hint(prompt):
+    """Starting points for this request, from `q search` on its words, or None when the match is weak.
+
+    Silent on small repos (two `cat`s load everything), on prompts too short to search, and with
+    CTXH_HINTS=0. Costs about 100 tokens when it fires."""
+    if env("HINTS") == "0" or not prompt or len(terms(prompt)) < HINT_MIN_TERMS:
+        return None
+    g = load_json(GRAPH)
+    if not g or sum(1 for n in g["files"].values() if n["role"] == "src") < SMALL_REPO_FILES:
+        return None
+    found = [h for h in keyword_search(g, prompt, HINT_HITS * 3) if g["files"][h[1]]["role"] != "docs"][:HINT_HITS]
+    if not found or found[0][0] < HINT_MIN_SCORE:
+        return None
+    hits = "; ".join(f"{f}:{line} {label}" for _, f, line, label in found)
+    card = CARDS / (g["files"][found[0][1]]["module"].replace("/", "-") + ".md")
+    tail = f" Card: {card.relative_to(ROOT)}." if card.exists() else ""
+    return f"ctx-harness: keyword matches for this request (leads, not answers): {hits}.{tail}"
+
+
 def cmd_hook_prompt(_):
     """With a gate on, recite its rule right where the next decision is made; always point at an active plan."""
-    ADAPTER.read_event(sys.stdin)
+    event = ADAPTER.read_event(sys.stdin) or {}
     if env("DISABLED") == "1" or not opted_in():
         return
     lines = []
+    hint = prompt_hint(event.get("prompt"))
+    if hint:
+        lines.append(hint)
     if gate_on("PLAN_GATE") or gate_on("REVIEW_GATE"):  # the reminder exists to avoid a gate's blocked turn
         rules = []
         if gate_on("PLAN_GATE"):
