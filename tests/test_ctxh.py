@@ -398,6 +398,36 @@ def load_ctxh():
     return mod
 
 
+class MapContent(unittest.TestCase):
+    def test_key_files_break_rank_ties_by_fixes_then_churn_then_api(self):
+        ctxh = load_ctxh()
+        tied = {"a.go": {"rank": 0.1}, "b.go": {"rank": 0.1, "churn": 4},
+                "c.go": {"rank": 0.1, "churn": 1, "risk": ["fix: x"]}, "d.go": {"rank": 0.1, "churn": 4, "symbols": [1, 2]},
+                "e.go": {"rank": 0.2}}
+        order = sorted(tied, key=lambda f: (ctxh.key_file_order(tied[f]), f))
+        self.assertEqual(order, ["e.go", "c.go", "d.go", "b.go", "a.go"])
+
+    def test_map_names_few_deps_and_only_recurring_cochange(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            repo.ctxh("build-index")
+            repo.ctxh("skeleton")
+            draft = (repo.root / ".ctx" / "map.draft.md").read_text()
+            graph = json.loads((repo.root / ".ctx" / "graph.json").read_text())
+            ctxh = load_ctxh()
+            for line in draft.splitlines():
+                if line.startswith("| app/"):
+                    self.assertLessEqual(line.split("|")[4].count(","), ctxh.MAP_DEPS)
+            pairs = [(c, f) for f, n in graph["files"].items() for _, c in n.get("cochange", [])]
+            self.assertTrue(all(c >= 2 for c, _ in pairs))  # the index keeps the weak pairs for `q cochange`
+            for line in draft.splitlines():
+                if "<->" in line:
+                    self.assertGreaterEqual(int(line.split("(")[1].split(" ")[0]), ctxh.MAP_COCHANGE_MIN)
+        finally:
+            repo.cleanup()
+
+
 class Ignore(unittest.TestCase):
     def test_ctxignore_excludes_fixtures_from_index_and_commands(self):
         repo = Repo()
