@@ -43,6 +43,9 @@ The normalized trace:
     {"side": "main", "input_tokens": 0, "output_tokens": 0,
      "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
   ],
+  "prompts": [                     # optional: the user's own messages, in order
+    {"text": "no, tax is computed in pricing", "after": 7},   # after = number of calls made before it
+  ],
   "calls": [                       # tool calls in first-seen order
     {"id": "…", "side": "main",    # "sub" for subagent work, which is not the session's own steps
      "tool": "Edit", "kind": "edit",   # kind is a TOOLS role, or None for an unmapped tool

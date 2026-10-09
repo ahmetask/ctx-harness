@@ -1390,6 +1390,10 @@ def cmd_ready(_):
 
 
 # ---------------------------------------------------------------- transcripts, traces, metrics
+REDIRECTS_KEPT = 5    # user prompts that followed a code edit, kept in the local trace
+REDIRECT_CHARS = 200
+
+
 def parse_transcript(path: Path):
     """Tokens, steps, files and commands of one session, from the adapter's normalized trace."""
     trace = ADAPTER.read_session(path)
@@ -1423,6 +1427,11 @@ def parse_transcript(path: Path):
         elif kind == "subagent":
             agents[call["agent"] or "general"] += 1
     rel = lambda p: os.path.relpath(p, ROOT) if p and os.path.isabs(p) else p
+    edit_at = next((i for i, c in enumerate(trace["calls"]) if c["side"] == "main" and c["kind"] == "edit"
+                    and lang_of(rel(c["path"]) or "") and not (rel(c["path"]) or "").startswith(".ctx")), None)
+    redirects = [] if edit_at is None else [
+        re.sub(r"\s+", " ", q["text"])[:REDIRECT_CHARS] for q in trace.get("prompts", []) if q["after"] > edit_at
+    ][:REDIRECTS_KEPT]
 
     def total(c):
         return sum(c[k] for k in usage_keys)
@@ -1435,7 +1444,7 @@ def parse_transcript(path: Path):
         "steps": len(main),
         "files_read": sorted({rel(p) for p in reads}), "files_edited": sorted({rel(p) for p in edits}),
         "commands": cmds, "failed_commands": failed, "ctx_queries": ctx_q, "ctx_misses": misses,
-        "subagents": dict(agents),
+        "redirects": redirects, "subagents": dict(agents),
         "assistant_messages": trace["assistant_messages"], "usage_messages": len(trace["usage"]),
         "known_tool_calls": len(main) - sum(unknown.values()), "unknown_tools": [n for n, _ in unknown.most_common()],
         "tool_version": trace["tool_version"],
@@ -1494,7 +1503,7 @@ def repo_id():
 
 def shared_trace(trace):
     """What leaves the machine: paths, commands and query strings, never command output (it can hold code)."""
-    out = {k: v for k, v in trace.items() if k != "failed_commands"}
+    out = {k: v for k, v in trace.items() if k not in ("failed_commands", "redirects")}  # what the user typed stays local
     out["failed_commands"] = [{"cmd": c["cmd"]} for c in trace.get("failed_commands", [])]
     out["repo"] = repo_id()
     return out
@@ -1587,7 +1596,7 @@ def record(session, data, label, task, tool=None):
         "tokens_sub", "steps", "subagents", "tool_version", "source")})
     if label == "harness":
         trace = {k: data[k] for k in ("session", "task", "recorded_at", "files_read", "files_edited", "commands",
-                                      "failed_commands", "ctx_queries", "ctx_misses", "subagents")}
+                                      "failed_commands", "ctx_queries", "ctx_misses", "redirects", "subagents")}
         write_json(TRACES / f"{session}.json", trace)
         sink_push(trace)
     for d in (METRICS, TRACES):  # bounded history: keep the newest records only
@@ -1769,7 +1778,7 @@ def cmd_signals(_):
     shared = [t for t in sink_pull() if t.get("session") not in local]  # a session counts once
     traces = [t for t in traces + shared if t and t.get("task") not in OVERHEAD_TASKS]
     for t in traces:
-        for k in ("files_read", "failed_commands", "ctx_queries", "ctx_misses"):
+        for k in ("files_read", "failed_commands", "ctx_queries", "ctx_misses", "redirects"):
             t.setdefault(k, [])
     if not traces:
         print("no traces yet")
@@ -1794,6 +1803,9 @@ def cmd_signals(_):
     miss = Counter(m for t in traces for m in t["ctx_misses"])
     print("\nindex queries that came back empty (index gap or wrong mental model):")
     print("\n".join(f"  {n}x {c}" for c, n in miss.most_common(10)) or "  none")
+    redirects = [(t.get("recorded_at", "")[:10], r) for t in traces for r in t["redirects"]]
+    print("\nuser redirects after an edit (what the user said once the agent had started changing code):")
+    print("\n".join(f"  {d}  {r}" for d, r in sorted(redirects)[-10:]) or "  none")
     print_learned_usage(traces)
     notes = CTX / "tasks" / "notes.md"
     if notes.exists() and notes.read_text().strip():

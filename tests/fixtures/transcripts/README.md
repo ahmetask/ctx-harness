@@ -9,6 +9,7 @@ so a change to it fails a test instead of silently zeroing metrics.
 | `session-edit.jsonl` | a normal session: `ctxh q` calls, a read, a subagent, a failed command, an empty-index query and an edit nobody reviewed. One assistant message is written twice (a stream retry), so usage must be deduplicated by `message.id`. |
 | `session-edit/subagents/scout.jsonl` | the sibling directory newer versions write; its tokens count as `tokens_sub` and its reads stay out of `files_read`. |
 | `session-reviewed.jsonl` | the same edit with a `ctx-harness:reviewer` call after it, so the Stop hook must not block. |
+| `session-redirect.jsonl` | an edit followed by user prompts: a correction (long, so it is cut to 200 characters), a harness-wrapped message that is not the user's, and a plain string prompt. They become `redirects` in the local trace and stay out of shared ones. The prompt before the edit is not a redirect. |
 | `drift-no-usage.jsonl` | `usage` moved to another key: the parser must warn, not record zeros. |
 | `drift-unknown-tools.jsonl` | tool names from another agent: tokens are still real, but traces and the gate are blind, so it warns. |
 

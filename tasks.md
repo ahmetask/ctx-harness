@@ -40,7 +40,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T23 | Session ledger on compaction when there is no plan | context | P2 | done |
 | T24 | Scoped learned lines, delivered with the hint | learning | P2 | done |
 | T25 | Usage evidence for pruning learned lines | learning | P3 | done |
-| T26 | User redirects as a learning signal | learning | P3 | todo |
+| T26 | User redirects as a learning signal | learning | P3 | done |
 | T27 | Screen shared traces before the curator reads them | learning | P3 | todo |
 
 Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest. For T22–T27: T22 → T23 → T24 (uses T22's per-session state) → T25 → T26 → T27.
@@ -156,7 +156,7 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 - **Problem:** curate step 4 says to remove learned lines that no recent trace touched, but nothing tells the curator which lines those are, so the step is a guess. Kiro Crew records when memories were accessed and decays them by age.
 - **Done when:** `ctxh signals` lists each learned line with the number of traces, and the latest date, that read or edited a path, or ran a command, named in backticks on that line. Lines with no such trace among the newest N are listed as prune candidates. The curate prompt points at that section. A test covers it.
 
-### T26 · User redirects as a learning signal
+### T26 · User redirects as a learning signal (done)
 - **Problem:** `signals` learns from files read, failed commands, empty index queries and coder notes, which the coder may skip. It misses the strongest signal: the user correcting the agent ("no, tax is computed in pricing, not orders"). Kiro Crew's consolidator extracts these implicit corrections into lessons, separately from explicit "remember this" requests.
 - **Done when:** the adapter's `read_session` also returns user prompt text with its position. The local trace keeps up to 5 user prompts that follow a code edit in the same session (first 200 characters each) as `redirects`. `shared_trace` drops them, as it drops command output. `signals` prints them under "user redirects after an edit", and the curator applies the existing promotion rule. A fixture test covers it, and the README privacy section says what is kept locally.
 

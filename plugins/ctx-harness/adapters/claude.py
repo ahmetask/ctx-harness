@@ -71,13 +71,14 @@ def read_session(path: Path):
 
     {"tool_version": str, "assistant_messages": int,
      "usage": [{"side": "main"|"sub", <USAGE_KEYS>: int}, ...]   one per model message, deduplicated,
-     "calls": [{"id", "side", "tool", "kind", "path", "command", "agent", "error", "output"}, ...]}
+     "calls": [{"id", "side", "tool", "kind", "path", "command", "agent", "error", "output"}, ...],
+     "prompts": [{"text", "after"}, ...]   the user's own messages; after = number of calls before it}
     calls are in first-seen order; kind is a TOOLS role or None for a tool this adapter doesn't map.
     Subagent transcripts (a sibling <session>/subagents/ directory, or sidechain entries) are side "sub".
     """
     if not path.exists():
         return None
-    usage, calls, results = {}, {}, {}
+    usage, calls, results, prompts = {}, {}, {}, []
     seen = {"assistant": 0, "version": ""}
 
     def ingest(p, bucket):
@@ -91,6 +92,12 @@ def read_session(path: Path):
             side = bucket if bucket == "sub" or not e.get("isSidechain") else "sub"
             if e.get("version"):
                 seen["version"] = str(e["version"])
+            if e.get("type") == "user" and side == "main" and not e.get("isMeta") and msg.get("role") == "user":
+                text = msg["content"] if isinstance(msg.get("content"), str) else " ".join(
+                    c.get("text", "") for c in content if c.get("type") == "text")
+                text = text.strip()
+                if text and not text.startswith(("<", "This session is being continued")):  # harness wrappers, summaries
+                    prompts.append({"text": text, "after": len(calls)})
             if e.get("type") == "assistant":
                 seen["assistant"] += 1
                 if msg.get("usage"):  # a stream retry writes the same message twice: key on its id
@@ -120,6 +127,7 @@ def read_session(path: Path):
         "tool_version": seen["version"], "assistant_messages": seen["assistant"],
         "usage": [{"side": side, **{k: u.get(k) or 0 for k in USAGE_KEYS}} for (side, _), u in usage.items()],
         "calls": list(calls.values()),
+        "prompts": prompts,
     }
 
 

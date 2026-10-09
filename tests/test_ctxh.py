@@ -834,6 +834,28 @@ class TranscriptFixtures(unittest.TestCase):
         self.assertIn("make legacy-deploy", cold)
         self.assertNotIn("app/orders/service.py", cold)
 
+    def test_user_prompts_after_an_edit_become_redirects_kept_locally(self):
+        sink = Path(tempfile.mkdtemp(prefix="ctxh-sink-"))
+        try:
+            self.repo.ctxh("hook-stop", stdin=json.dumps(
+                {"session_id": "s9", "transcript_path": str(self.load("session-redirect"))}),
+                env={"CTXH_REVIEW_GATE": "0", "CTXH_TRACE_SINK": str(sink)})
+            local = json.loads((self.repo.root / ".ctx" / "traces" / "s9.json").read_text())
+            r = local["redirects"]
+            self.assertEqual(len(r), 2)  # the harness-wrapped message and the first prompt are not redirects
+            self.assertTrue(r[0].startswith("No, the idempotency key comes from the order id"))
+            self.assertEqual(len(r[0]), 200)
+            self.assertEqual(r[1], "Thanks, ship it.")
+            shared = "".join(p.read_text() for p in sink.rglob("*.json"))
+            self.assertIn("app/orders/service.py", shared)  # the sink did receive the trace
+            self.assertNotIn("idempotency key comes", shared)
+            self.assertNotIn("redirects", shared)
+            out = self.repo.ctxh("signals").stdout
+            self.assertIn("user redirects after an edit", out)
+            self.assertIn("No, the idempotency key comes from the order id", out)
+        finally:
+            shutil.rmtree(sink, ignore_errors=True)
+
     def test_gate_blocks_the_unreviewed_edit_and_passes_the_reviewed_one(self):
         blocked = self.repo.ctxh("hook-stop", stdin=json.dumps(
             {"session_id": "s1", "transcript_path": str(self.load("session-edit"))})).stdout
