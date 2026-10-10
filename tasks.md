@@ -34,7 +34,7 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T17 | Hook adapters for other agents | portability | P3 | done |
 | T18 | Tool label in metrics and vendor-neutral token counting | portability | P3 | done |
 | T19 | Review gate outside the agent (pre-commit / CI) | enforcement | P3 | done |
-| T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | todo |
+| T20 | Run the real benchmark and publish results (pilot in docs/benchmark.md) | measurement | P1 | done |
 | T21 | Exclude fixture dirs from indexing (`.ctxignore`) | dogfooding | P1 | done |
 | T22 | Don't repeat prompt hints within a session | context | P3 | done |
 | T23 | Session ledger on compaction when there is no plan | context | P2 | done |
@@ -79,7 +79,7 @@ Fixtures in `tests/fixtures/transcripts/` (a session with a subagent, a reviewed
 ### T07 · Benchmark platform with a demo repo (done)
 - Built `bench/`: a Go demo repo (`shopd`) with scripted history, 6 tasks with hidden checks and reference solutions, a runner (`claude`, `fake` and `noop` agents) and a report. See `bench/README.md` and `.ctx/tasks/done/T07-benchmark-platform.md`.
 
-### T20 · Run the real benchmark and publish results
+### T20 · Run the real benchmark and publish results (done 2026-10-09; see docs/benchmark.md)
 - **Problem:** the platform exists, but no real harness-vs-baseline numbers do yet. The README's claim that the harness is cheaper is still unproven.
 - **Pilot (2026-10-07):** 2 tasks × 1 repeat in `docs/benchmark.md`. All passed; harness −7% on t2, +129% on t4 (planner + reviewer overhead), bootstrap 2.2M tokens. It also found that shell edits bypass the review gate. The full run is still to do.
 - **Done when:** `python3 bench/run.py --agent claude --repeats 3` has run on at least one model, and its `report.md` plus a short reading (where the harness wins or loses, and why) is in `docs/benchmark.md`. Rerun after T01–T03, since they change what the harness indexes on Go repos. Optional later: a second demo repo in another language, or a public repo with tasks.
