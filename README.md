@@ -21,6 +21,16 @@ Then, in a repository:
 /ctx-harness:build
 ```
 
+To install for one repository instead of globally, add `--scope project` (shared via `.claude/settings.json`) or `--scope local` (this machine only) to the install command.
+
+To pick up a new release later, update the plugin and restart Claude Code, then refresh the repo's context:
+
+```bash
+claude plugin update ctx-harness@ctx-harness
+```
+
+Then, in the repository, run `/ctx-harness:curate` to refresh stale cards. Claude Code pins the installed copy to the commit it saw, so without the update step the hooks and protocol stay on the old version.
+
 To have teammates prompted to install it when they open a repo, add this to the repo's `.claude/settings.json`:
 
 ```json
