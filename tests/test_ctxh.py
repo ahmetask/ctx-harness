@@ -204,6 +204,12 @@ class CardsAndHooks(unittest.TestCase):
     def tearDown(self):
         self.repo.cleanup()
 
+    def test_anchor_records_the_commit_the_card_was_verified_against(self):
+        self.repo.ctxh("anchor", str(self.card))
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=self.repo.root,
+                              capture_output=True, text=True).stdout.strip()
+        self.assertIn(f"verified: {head}\n", self.card.read_text())
+
     def test_unstamped_anchor_is_reported_then_fixed(self):
         r = self.repo.ctxh("check", check=False)
         self.assertIn("anchors not stamped", r.stdout)
@@ -312,6 +318,20 @@ class CardsAndHooks(unittest.TestCase):
         trace = json.loads((self.repo.root / ".ctx" / "traces" / "s1.json").read_text())
         self.assertEqual(trace["ctx_queries"], ["ctxh q impact service.py"])
         self.assertEqual(trace["files_edited"], ["app/orders/service.py"])
+
+    def test_shell_edit_counts_as_an_edit_when_git_sees_it(self):
+        svc = self.repo.root / "app/orders/service.py"
+        tp = self.repo.root / "t.jsonl"
+        transcript(tp, [("bash", {"command": "cat >> app/orders/service.py <<'EOF'\n# x\nEOF"})])  # lowercase tool name
+        payload = json.dumps({"session_id": "sh1", "transcript_path": str(tp)})
+        self.assertEqual(self.repo.ctxh("hook-stop", stdin=payload).stdout, "")  # git shows no change yet
+        svc.write_text(svc.read_text() + "# x\n")
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "sh2", "transcript_path": str(tp)})).stdout
+        self.assertEqual(json.loads(out)["decision"], "block")
+        transcript(tp, [("bash", {"command": "cat >> app/orders/service.py <<'EOF'\n# x\nEOF"}),
+                        ("Agent", {"subagent_type": "ctx-harness:reviewer", "prompt": "review"})])
+        out = self.repo.ctxh("hook-stop", stdin=json.dumps({"session_id": "sh3", "transcript_path": str(tp)})).stdout
+        self.assertEqual(out, "")
 
     def test_reviewer_after_edit_passes_gate(self):
         tp = self.repo.root / "t.jsonl"

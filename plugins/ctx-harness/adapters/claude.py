@@ -20,6 +20,7 @@ TOOLS = {
     "subagent": ("Task", "Agent"),
 }
 KIND_OF = {name: kind for kind, names in TOOLS.items() for name in names}
+KIND_OF_FOLDED = {name.lower(): kind for name, kind in KIND_OF.items()}  # a tool name that arrives as `bash`
 
 # How prompts name things (bin/ctxh render_prompt fills {{agent:X}}, {{command:X}} and {{tool:ROLE}}).
 AGENT_REF = "ctx-harness:{}"
@@ -106,7 +107,7 @@ def read_session(path: Path):
                 if c.get("type") == "tool_use":
                     name, inp = c.get("name"), c.get("input") or {}
                     calls[c.get("id")] = {
-                        "id": c.get("id"), "side": side, "tool": name, "kind": KIND_OF.get(name),
+                        "id": c.get("id"), "side": side, "tool": name, "kind": KIND_OF.get(name) or KIND_OF_FOLDED.get(str(name).lower()),
                         "path": inp.get("file_path") or inp.get("notebook_path") or "",
                         "command": inp.get("command", ""), "agent": inp.get("subagent_type"),
                     }
