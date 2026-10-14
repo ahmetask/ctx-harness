@@ -906,7 +906,9 @@ def cmd_skeleton(_):
     if risky:
         out += ["", "## Fragile files (fix/revert history)"]
         for _, f in risky:
-            out.append(f"- {f}: {files[f]['risk'][0]}")
+            card = CARDS / (files[f]["module"].replace("/", "-") + ".md")  # the invariant behind the fix lives there
+            link = f" (rule: .ctx/cards/{card.name})" if card.exists() else ""
+            out.append(f"- {f}: {files[f]['risk'][0]}{link}")
     out += ["", "## Finding things",
             "- Ask the index first: `ctxh q find|rdeps|impact|cochange|tests|owner|module <arg>`",
             "- Module cards: `.ctx/cards/<module-with-dashes>.md` (open only for the module you touch)",
@@ -1140,6 +1142,9 @@ def cmd_anchor(args):
     missing = [a for a in anchors if not (ROOT / a).exists()]
     anchors = {a: file_sha(ROOT / a) for a in anchors if (ROOT / a).exists()}
     meta["updated"] = time.strftime("%Y-%m-%d")
+    code, head, _ = sh(["git", "rev-parse", "--short", "HEAD"])
+    if code == 0 and head.strip():
+        meta["verified"] = head.strip()  # the commit the card's claims were last checked against
     card.write_text(render_card(meta, anchors, body))
     print(f"anchored {card.name} to {len(anchors)} files" + (f"; dropped missing: {missing}" if missing else ""))
 
@@ -2194,6 +2199,12 @@ def cmd_hook_prompt(_):
         ADAPTER.emit_context("\n".join(lines))
 
 
+# Shell commands that can write a file: redirects, heredocs, tee, in-place sed/perl, patches. A hint, not proof:
+# `session_edits` confirms it against `git diff` before counting anything.
+SHELL_WRITE = re.compile(r"(?<![<>&0-9-])>>?(?![>&=])\s*[\w./\"'$~-]|<<-?\s*['\"]?\w|\btee\b|\bsed\s+(-\w*i|--in-place)|"
+                         r"\bperl\s+-\w*i|\bpatch\b|\bgit\s+(apply|checkout|restore|stash\s+pop)\b|\bwrite_text\b|\bopen\([^)]*['\"]w")
+
+
 def session_edits(path: Path):
     """What the gates need from a transcript: the code the main session changed, and who it called.
 
@@ -2204,6 +2215,7 @@ def session_edits(path: Path):
     """
     info = {"files": [], "last_edit": None, "reviewed_after": False, "planner": False}
     trace = ADAPTER.read_session(path)
+    shell_write, reviewed_after_shell, shell_last = None, False, False
     for call in trace["calls"] if trace else []:
         if call["side"] != "main":
             continue
@@ -2213,15 +2225,27 @@ def session_edits(path: Path):
             if rel == os.path.join(".ctx", "tasks", "active.md"):
                 info["planner"] = True
             elif f and not rel.startswith((".ctx", "..")) and lang_of(rel):
-                info["last_edit"], info["reviewed_after"] = call["id"], False
+                info["last_edit"], info["reviewed_after"], shell_last = call["id"], False, False
                 if rel not in info["files"]:
                     info["files"].append(rel)
+        elif call["kind"] == "shell" and SHELL_WRITE.search(call["command"] or ""):
+            shell_write, reviewed_after_shell, shell_last = call["id"], False, True
         elif call["kind"] == "subagent":
             kind = str(call["agent"] or "")
             if kind.endswith("reviewer"):
-                info["reviewed_after"] = True
+                info["reviewed_after"] = reviewed_after_shell = True
             elif kind.endswith("planner"):
                 info["planner"] = True
+    if shell_write:  # edits made through the shell leave no edit call: ask git which code files changed
+        try:
+            changed = [f for f, _ in changed_code()]
+        except SystemExit:  # not a git repo, or git failed: the edit calls are all there is
+            changed = []
+        extra = [f for f in changed if f not in info["files"] and not f.startswith(".ctx") and lang_of(f)]
+        if extra:
+            info["files"].extend(extra)
+            if shell_last:  # no later edit call: the shell write is the last change
+                info["last_edit"], info["reviewed_after"] = shell_write, reviewed_after_shell
     return info
 
 
