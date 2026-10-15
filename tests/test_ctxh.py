@@ -412,6 +412,18 @@ class PromptHint(unittest.TestCase):
     def test_strong_match_points_at_the_code(self):
         self.assertIn("pkg/ledger.py:1 reconcile_balance", self.hook(self.ASK))
 
+    def test_vague_change_request_gets_a_clarify_nudge(self):
+        out = self.hook("add caching to the api")
+        self.assertIn("does not say the expected behaviour, how to test it or which part", out)
+        self.assertIn("ask the user 1-3 short questions", out)
+
+    def test_clear_or_non_change_prompts_get_no_clarify_nudge(self):
+        for p in ["Add retry to fetch_user so that it returns None on 404, then run the tests",
+                  "what does the ledger module do?", "/build", "fix the login bug, just do it",
+                  "implement a rate limiter " + "word " * 45]:
+            self.assertNotIn("does not say", self.hook(p), p)
+        self.assertNotIn("does not say", self.hook("add caching to the api", CTXH_CLARIFY="0"))
+
     def test_repeat_in_a_session_is_silent_until_compact(self):
         def run(cmd, **payload):
             return self.repo.ctxh(cmd, env=self.off, stdin=json.dumps(payload)).stdout

@@ -8,6 +8,7 @@ Finding things, cheapest first:
 3. Raw grep/read, targeted. Read file ranges, not whole large files. Batch the reads you already know you need into one command.
 
 Task flow:
+- If a request leaves the outcome or how to check it open and the code can't answer it, ask the user a few short questions (with your suggested defaults) before editing; if a guess is cheap, state it in one line and go.
 - If `.ctx/tasks/active.md` exists, read it first and continue from its progress log.
 - Read the card, then the files it and the map point to, and edit. Do not re-read what you just wrote.
 - Validate with the verified commands in the map. Send long output to `.ctx/tmp/` and read it with tail/grep.
