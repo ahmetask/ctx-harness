@@ -2172,6 +2172,49 @@ def prompt_hint(prompt, session=None):
     return "\n".join(filter(None, [out] + [f"ctx-harness: learned in {module}: {t}" for t in gotchas]))
 
 
+CLARIFY_MAX_TERMS = 40  # a longer request has usually said what it wants
+CLARIFY_MIN_TERMS = 3
+CLARIFY_ACTION = re.compile(r"\b(add|implement|build|create|make|fix|change|update|refactor|rewrite|migrate|support|"
+                            r"integrate|optimi[sz]e|improve|remove|replace|introduce|write)\b", re.I)
+CLARIFY_BEHAVIOUR = re.compile(r"\b(should|must|expect\w*|so that|returns?|when|if|instead|acceptance|criteria|"
+                               r"given|then|error|fails?|only|without)\b", re.I)
+CLARIFY_TEST = re.compile(r"\b(tests?|verify|verified|check|run|passes|pass|repro\w*|demo|manually)\b", re.I)
+CLARIFY_ANCHOR = re.compile(r"`[^`]+`|\b[\w./-]+\.(py|js|ts|tsx|go|rs|java|rb|md|json|ya?ml|toml|sh)\b|\b\w+_\w+\b|\b[a-z]+[A-Z]\w*\b")
+CLARIFY_OPT_OUT = re.compile(r"\b(just do it|don'?t ask|no questions|without asking|skip (the )?questions)\b", re.I)
+
+
+def clarify_hint(prompt):
+    """A nudge to ask before building when the request names an action but not the outcome.
+
+    Fires on a short request that asks for a change and lacks the expected behaviour and how to check it
+    (a concrete file or symbol also counts as missing context when behaviour and testing are both absent).
+    The agent decides whether to ask; this only says what to ask about. Silent on questions, slash commands,
+    long prompts, prompts that already state behaviour or testing, and with CTXH_CLARIFY=0."""
+    if env("CLARIFY") == "0" or not prompt:
+        return None
+    text = prompt.strip()
+    n = len(terms(text))
+    if text.startswith(("/", "!", "#")) or n < CLARIFY_MIN_TERMS or n > CLARIFY_MAX_TERMS:
+        return None
+    if CLARIFY_OPT_OUT.search(text) or text.endswith("?") and not CLARIFY_ACTION.search(text):
+        return None
+    if not CLARIFY_ACTION.search(text):
+        return None
+    missing = []
+    if not CLARIFY_BEHAVIOUR.search(text):
+        missing.append("the expected behaviour")
+    if not CLARIFY_TEST.search(text):
+        missing.append("how to test it")
+    if not CLARIFY_ANCHOR.search(text):
+        missing.append("which part of the project it touches")
+    if len(missing) < 2:
+        return None
+    return ("ctx-harness: this request does not say " + ", ".join(missing[:-1]) + (" or " if len(missing) > 1 else "")
+            + missing[-1] + ". If the repo map and cards do not settle it and a wrong guess would cost real rework, "
+            "ask the user 1-3 short questions before editing (one message, with your suggested default for each); "
+            "otherwise state your assumption in one line and proceed. Do not ask about what you can read from the code.")
+
+
 def cmd_hook_prompt(_):
     """With a gate on, recite its rule right where the next decision is made; always point at an active plan."""
     event = ADAPTER.read_event(sys.stdin) or {}
@@ -2181,6 +2224,9 @@ def cmd_hook_prompt(_):
     hint = prompt_hint(event.get("prompt"), event.get("session"))
     if hint:
         lines.append(hint)
+    clarify = clarify_hint(event.get("prompt"))
+    if clarify:
+        lines.append(clarify)
     if gate_on("PLAN_GATE") or gate_on("REVIEW_GATE"):  # the reminder exists to avoid a gate's blocked turn
         rules = []
         if gate_on("PLAN_GATE"):

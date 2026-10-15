@@ -163,3 +163,7 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 ### T27 · Screen shared traces before the curator reads them (done)
 - **Problem:** with `CTXH_TRACE_SINK` set, `signals` prints commands, queries and paths from other machines straight into the curator's context, and the curator writes committed files from them. A command line can carry instruction-like text. Kiro Crew screens third-party text, drops matches with an audit record, and rewrites forged block markers before injecting anything.
 - **Done when:** `signals` drops shared-trace strings that match `IMPERATIVE` or a small injection pattern (for example "ignore previous instructions", "system prompt"), and prints how many it dropped. Local traces are not screened. A test covers it.
+
+### T28 · Ask clarifying questions on vague change requests (done)
+- **Problem:** a prompt like "add caching to the api" names an action but not the expected behaviour or how to test it, and agents guess, then rework.
+- **Done when:** `hook-prompt` adds a ~60-token nudge for short change requests that state neither behaviour nor testing (and name no file or symbol): ask 1-3 short questions with suggested defaults if a wrong guess costs rework, else state the assumption. Silent on questions, slash commands, long prompts, "just do it". `CTXH_CLARIFY=0` disables; the protocol has the matching line. Tests cover both paths.

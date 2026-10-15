@@ -67,7 +67,7 @@ Step-by-step sequence diagrams are in [docs/flow.md](docs/flow.md).
 **Hooks** (they run automatically, and only in repos that have `.ctx/`):
 
 - **SessionStart:** injects the protocol and `.ctx/map.md` (a few hundred tokens), lists stale cards, points to an active plan, and re-indexes in the background if code changed since the last index. It runs again after the conversation is compacted (and on `--resume`). When a plan is active, the injection then names the plan and repeats the last 8 entries of its progress log, so the agent picks up where it left off instead of re-planning.
-- **UserPromptSubmit:** on repos with 15+ source files, a request of 5+ meaningful words with a strong `q search` match gets 3 `file:line` leads and the module's card path (about 100 tokens; `CTXH_HINTS=0` turns it off). Otherwise silent. It also points at an active plan, and when a gate below is on it reminds the agent of that gate's rule (in Claude Code, also to run subagents in the foreground).
+- **UserPromptSubmit:** on repos with 15+ source files, a request of 5+ meaningful words with a strong `q search` match gets 3 `file:line` leads and the module's card path (about 100 tokens; `CTXH_HINTS=0` turns it off). Otherwise silent. A short request to change something that states neither the expected behaviour nor how to test it (nor names a file or symbol) also gets a ~60-token nudge to ask 1-3 short questions first when a wrong guess would cost rework, else to state its assumption (`CTXH_CLARIFY=0` turns it off). It also points at an active plan, and when a gate below is on it reminds the agent of that gate's rule (in Claude Code, also to run subagents in the foreground).
 - **Stop:** records tokens, steps, files read and edited, failed commands and empty index queries. With `CTXH_REVIEW_GATE=1` it also blocks finishing once if code changed since the last reviewer run, and with `CTXH_PLAN_GATE=1` once if 3+ code files changed with no plan. Both gates are off by default because each costs a model turn plus a subagent; each blocks only once per edit, so neither can loop.
 
 In a repo without `.ctx/`, the hooks print a one-line hint and write nothing.
@@ -247,6 +247,7 @@ Curation should follow merges, not run during a task. Options:
 |---|---|
 | `CTXH_DISABLED=1` | Harness off for the session: nothing is injected, and the run is recorded as `baseline` |
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
+| `CTXH_CLARIFY=0` | Turn off the clarifying-questions nudge on vague change requests |
 | `CTXH_HINTS=0` | Turn off the keyword leads the prompt hook adds to a request |
 | `CTXH_REVIEW_GATE=1` | Opt in: the Stop hook blocks once when code changed and no reviewer ran after the last edit. `CTXH_REVIEW_GATE=0` turns off `ctxh review-check` |
 | `CTXH_PLAN_GATE=1` | Opt in: the Stop hook blocks once when 3+ code files changed with no plan |
