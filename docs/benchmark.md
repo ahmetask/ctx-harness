@@ -1,6 +1,31 @@
 # Benchmark results
 
-## Large repo, 2026-10-16: Hugo (852 Go files), baseline vs harness vs map-only
+## Large repo, symptom-only bug reports, full history (2026-10-16)
+
+Follow-up to the Hugo run below, built to remove its two biggest caveats: the prompts named greppable identifiers, and the checkout had one commit. Same repo and pinned commit (Hugo v0.140.2, 852 Go files), but with full git history (8,752 commits; the miner reads the latest 500, so churn, co-change and owners exist this time), and five new bug-fix tasks in the suite `hugo-symptom` whose prompts describe only what a user sees. Each is a one-line bug planted by `setup.patch` in a different package: group headings merged in a grouped paginator (`resources/page`), `delimit` ignoring its last separator for two items (`tpl/collections`), `absURL ""` losing the base URL's trailing slash (`common/paths`), table-of-contents end level one too low (`markup/tableofcontents`), and an allowlist that drops its last pattern, which blocks `getenv "CI"` (`config/security`). Every task has a hidden test that fails on the planted state and passes with the fix (`tests/test_bench.py::HugoSuite`). 5 repeats, baseline vs harness, plan and review gates off. One bootstrap build ($0.41, 2.1M tokens, 22 minutes), reused for every harness run. Raw rows, reports, the context used and `aggregate.py` are in `docs/benchmarks/hugo-symptom-2026-10-16/`.
+
+| arm | pass | total tokens | median tokens | median steps | median uncached | cost |
+|---|---|---|---|---|---|---|
+| baseline | 25/25 | 6.24M | 247.6k | 6 | 14.3k | $2.23 |
+| harness (map + cards) | 25/25 | 6.55M (+5%) | 268.4k | 5 | 17.3k | $2.57 (+15%) |
+
+| task | baseline | harness | change |
+|---|---|---|---|
+| s1 grouped pagination | 287.5k, 7 steps | 277.3k, 5 steps | -4% |
+| s2 `delimit`, two items | 207.9k, 5 steps | 223.9k, 4 steps | +8% |
+| s3 `absURL ""` | 301.9k, 8 steps | 276.0k, 6 steps | -9% |
+| s4 table-of-contents end level | 251.8k, 7 steps | 313.0k, 6 steps | +24% |
+| s5 `getenv` allowlist | 247.6k, 6 steps | 178.5k, 4 steps | -28% |
+
+Reading it:
+- **Still no saving, and a cost increase.** The harness took one fewer step at the median (139 steps against 152 in total), but each session carries the injected map and protocol (uncached tokens +21%), so tokens went up 5% and cost 15%. The per-task spread (-28% to +24%) is as large as the effect; with 5 repeats this reads as noise around zero, not as a win or a loss on any one task.
+- **The agent did not use the index.** In 25 harness sessions Claude ran `ctxh q` zero times. It read the injected map, then used grep and `go test` as in the baseline. So the history signals (churn, co-change, owners) were available but never consulted; this run says nothing about whether they would help if used.
+- **Symptom-only prompts were still easy.** Both arms fixed 25 of 25. Baseline needed 5 to 8 steps, about 25 seconds per task (not comparable with the first Hugo run: this suite sets `-trimpath`, which lets Go reuse its build cache across clones). My reading, not tested, is that a one-line bug in a well-tested package falls to the package's own tests once grep points at the package, and the prompts gave enough words to grep.
+- **The combined result of both Hugo runs:** ctx cut tokens on tasks that touch several places (-26% and -27%) and cost 5 to 15% more on single-spot fixes. It has not yet saved money on any large-repo run.
+
+What this does not show: harder tasks (a failing integration test far from the cause, a regression introduced a few commits ago, a change that needs 15+ files), a model told to use the index before searching, or a different agent. Those are where a map should pay off, and none has been measured.
+
+## Large repo, greppable tasks, 2026-10-16: Hugo (852 Go files), baseline vs harness vs map-only
 
 The demo repo (43 files) is too small for a map to replace much search, so this run uses a real project: [Hugo](https://github.com/gohugoio/hugo) v0.140.2 (852 Go files, 44 modules), vendored as the submodule `bench/repos/hugo`. Run it with `python3 bench/run.py --suite hugo --agent claude ...` (see `bench/README.md`). Raw rows, per-run reports, the context that was used and `aggregate.py` are in `docs/benchmarks/hugo-2026-10-16/`.
 

@@ -1,0 +1,11 @@
+{
+  "repo": "bench/repos/hugo",
+  "regression": [
+    "go",
+    "build",
+    "./..."
+  ],
+  "env": {
+    "GOFLAGS": "-trimpath"
+  }
+}

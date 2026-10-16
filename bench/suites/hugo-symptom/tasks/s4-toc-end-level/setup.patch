@@ -1,0 +1,13 @@
+diff --git a/markup/tableofcontents/tableofcontents.go b/markup/tableofcontents/tableofcontents.go
+index 560e421b7..98afec8d6 100644
+--- a/markup/tableofcontents/tableofcontents.go
++++ b/markup/tableofcontents/tableofcontents.go
+@@ -194,7 +194,7 @@ func (b *tocBuilder) writeHeadings(level, indent int, h Headings) {
+ 		return
+ 	}
+ 
+-	if b.stopLevel != -1 && level > b.stopLevel {
++	if b.stopLevel != -1 && level >= b.stopLevel {
+ 		return
+ 	}
+ 

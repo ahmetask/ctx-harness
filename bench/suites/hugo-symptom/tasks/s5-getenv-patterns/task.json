@@ -1,0 +1,25 @@
+{
+  "id": "s5-getenv-patterns",
+  "category": "bugfix",
+  "prompt": "Bug report: the template function `getenv` is denied for `CI` with the default security settings, although `CI` is meant to be allowed next to the `HUGO_` variables. A site that sets `[security.funcs] getenv = ['^HUGO_', '^MYAPP_']` finds that `MYAPP_` variables are still denied while `HUGO_` ones work. Find the cause and fix it. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./config/security/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./config/security/"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_getenv_test.go": "config/security/hidden_getenv_test.go"
+  },
+  "max_turns": 40
+}

@@ -1,0 +1,25 @@
+{
+  "id": "s1-grouped-pagination",
+  "category": "bugfix",
+  "prompt": "Bug report: on a list page that paginates a grouped list, for example `{{ range (.Paginate (.Pages.GroupByDate \"2006\")).PageGroups }}`, a pager page that spans two groups shows all of its pages under the first group's heading and the second group's heading is missing. Pager pages that sit inside one group look right. Find the cause and fix it. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./resources/page/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./resources/page/"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_groups_test.go": "resources/page/hidden_groups_test.go"
+  },
+  "max_turns": 40
+}

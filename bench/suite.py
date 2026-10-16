@@ -35,7 +35,7 @@ class Suite:
             from materialize import materialize  # bench/demo, on sys.path via run.py
             return materialize(dest)
         if not (self.repo / ".git").exists():
-            raise SystemExit(f"suite '{self.name}' needs its repo: git submodule update --init --depth 1 "
+            raise SystemExit(f"suite '{self.name}' needs its repo: git submodule update --init "
                              f"{self.repo.relative_to(ROOT)}")
         dest = Path(dest)
         subprocess.run(["git", "clone", "-q", "--no-hardlinks", str(self.repo), str(dest)], check=True,

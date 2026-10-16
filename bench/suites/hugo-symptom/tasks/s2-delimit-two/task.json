@@ -1,0 +1,25 @@
+{
+  "id": "s2-delimit-two",
+  "category": "bugfix",
+  "prompt": "Bug report: joining a list with a custom last separator ignores that separator when the list has exactly two items. `{{ delimit (slice \"Hugo\" \"Go\") \", \" \" and \" }}` prints `Hugo, Go` instead of `Hugo and Go`, while the same call with three items prints `A, B and C` as expected. Find the cause and fix it. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./tpl/collections/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./tpl/collections/"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_delimit_test.go": "tpl/collections/hidden_delimit_test.go"
+  },
+  "max_turns": 40
+}

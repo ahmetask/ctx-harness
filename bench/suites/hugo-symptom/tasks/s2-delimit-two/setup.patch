@@ -1,0 +1,13 @@
+diff --git a/tpl/collections/collections.go b/tpl/collections/collections.go
+index c1e7286ce..6f1fcc7f4 100644
+--- a/tpl/collections/collections.go
++++ b/tpl/collections/collections.go
+@@ -132,7 +132,7 @@ func (ns *Namespace) Delimit(ctx context.Context, l, sep any, last ...any) (stri
+ 				continue
+ 			}
+ 			switch {
+-			case i == lv.Len()-2 && dLast != nil:
++			case i == lv.Len()-2 && dLast != nil && lv.Len() > 2:
+ 				str += valStr + *dLast
+ 			case i == lv.Len()-1:
+ 				str += valStr

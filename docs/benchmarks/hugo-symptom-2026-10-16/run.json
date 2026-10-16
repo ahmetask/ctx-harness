@@ -1,0 +1,23 @@
+{
+ "run": "20261016-071035-claude",
+ "suite": "hugo-symptom",
+ "agent": "claude",
+ "model": null,
+ "repeats": 5,
+ "modes": [
+  "baseline",
+  "harness"
+ ],
+ "tasks": [
+  "s1-grouped-pagination",
+  "s2-delimit-two",
+  "s3-absurl-root",
+  "s4-toc-end-level",
+  "s5-getenv-patterns"
+ ],
+ "gates": false,
+ "graphify": null,
+ "started": "2026-10-16T07:10:35",
+ "synthetic": false,
+ "finished": "2026-10-16T08:10:04"
+}
