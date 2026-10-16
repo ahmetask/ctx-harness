@@ -32,9 +32,8 @@ sys.path.insert(0, str(BENCH / "demo"))
 
 import report  # noqa: E402
 from agents import CTXH, clean_env, make_agent  # noqa: E402
-from materialize import materialize  # noqa: E402
+from suite import load_suite  # noqa: E402
 
-TASKS_DIR = BENCH / "tasks"
 REGRESSION = ["go", "test", "-count=1", "./..."]  # every run must also leave the whole suite green
 MODES = ("harness", "baseline")
 ALL_MODES = ("baseline", "graphify", "harness", "harness+graphify")  # --modes accepts any subset
@@ -50,18 +49,20 @@ class Task:
     hidden: dict
     max_turns: int
     dir: Path
+    regression: list | None = None  # overrides the suite's regression check, e.g. a package-scoped go test
 
     @property
     def solution(self) -> Path:
         return self.dir / "solution"
 
 
-def load_tasks(selected=None):
+def load_tasks(selected=None, suite=None):
+    suite = suite or load_suite("demo")
     tasks = []
-    for spec in sorted(TASKS_DIR.glob("*/task.json")):
+    for spec in sorted(suite.tasks_dir.glob("*/task.json")):
         d = json.loads(spec.read_text())
         tasks.append(Task(d["id"], d["category"], d["prompt"], d["check"], d.get("hidden", {}),
-                          d.get("max_turns", 40), spec.parent))
+                          d.get("max_turns", 40), spec.parent, d.get("regression") or suite.regression))
     if selected:
         want = [s.strip() for s in selected.split(",") if s.strip()]
         picked = [t for t in tasks if any(t.id == w or t.id.startswith(w + "-") for w in want)]
@@ -77,7 +78,7 @@ def run_check(repo: Path, task: Task):
     for src, dst in task.hidden.items():
         (repo / dst).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(task.dir / src, repo / dst)
-    for cmd in [*task.check, REGRESSION]:
+    for cmd in [*task.check, task.regression or REGRESSION]:
         try:
             r = subprocess.run(cmd, cwd=repo, env=clean_env(), text=True, capture_output=True, timeout=600)
         except (OSError, subprocess.TimeoutExpired) as e:
@@ -155,6 +156,7 @@ def snapshot_ctx(repo: Path, dest: Path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--agent", default="fake", help="claude | fake | noop (default: fake)")
+    ap.add_argument("--suite", default="demo", help="repo and tasks to run: demo (default) or a folder in bench/suites")
     ap.add_argument("--tasks", help="comma-separated task ids or prefixes such as t2,t4 (default: all)")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--modes", default=",".join(MODES),
@@ -179,7 +181,10 @@ def main(argv=None):
             raise SystemExit("graphify modes need the graphify CLI: pip install graphifyy, or pass --graphify-bin")
     if not shutil.which("go"):
         raise SystemExit("go is required to run the demo repo's checks")
-    tasks = load_tasks(args.tasks)
+    suite = load_suite(args.suite)
+    for key, value in (suite.env or {}).items():
+        os.environ.setdefault(key, value)
+    tasks = load_tasks(args.tasks, suite)
     agent = make_agent(args.agent, model=args.model, gates=args.gates,
                        max_turns=args.max_turns, timeout=args.timeout, graphify_bin=gbin)
     engine = load_engine()
@@ -193,7 +198,7 @@ def main(argv=None):
     run_dir.mkdir(parents=True)
     work = Path(tempfile.mkdtemp(prefix="ctxh-bench-"))
     scratch = run_dir / "transcripts"
-    meta = {"run": run_id, "agent": agent.name, "model": args.model, "repeats": args.repeats, "modes": modes,
+    meta = {"run": run_id, "suite": suite.name, "agent": agent.name, "model": args.model, "repeats": args.repeats, "modes": modes,
             "tasks": [t.id for t in tasks], "gates": args.gates, "graphify": graphify_version(gbin),
             "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "synthetic": agent.name != "claude"}
     (run_dir / "run.json").write_text(json.dumps(meta, indent=1))
@@ -214,7 +219,7 @@ def main(argv=None):
             snapshot = Path(args.ctx_from).resolve()
             meta["ctx_from"] = str(snapshot)
         else:
-            repo = materialize(work / "bootstrap")
+            repo = suite.materialize(work / "bootstrap")
             res = agent.bootstrap(repo, scratch)
             keep_transcript(res, scratch / "bootstrap.jsonl")
             ok = (repo / ".ctx" / "map.md").exists()
@@ -234,7 +239,7 @@ def main(argv=None):
         for i, task in enumerate(tasks):
             order = modes if (repeat + i) % 2 == 0 else modes[::-1]  # alternate who goes first
             for mode in order:
-                repo = materialize(work / f"{task.id}-{mode}-{repeat}")
+                repo = suite.materialize(work / f"{task.id}-{mode}-{repeat}", task)
                 if "harness" in mode:
                     add_harness_context(repo, snapshot)
                 if gbin and mode in GRAPHIFY_MODES:

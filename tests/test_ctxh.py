@@ -502,6 +502,18 @@ class Polyglot(unittest.TestCase):
         finally:
             repo.cleanup()
 
+    def test_import_of_a_non_code_file_is_not_an_edge(self):
+        repo = Repo()
+        try:
+            write(repo.root, "package.json", '{"name": "x"}')
+            write(repo.root, "src/style.css", "body { margin: 0 }\n")
+            write(repo.root, "src/index.ts", 'import "./style.css";\nexport class App {}\n')
+            repo.commit("init")
+            repo.ctxh("build-index")  # used to die with a KeyError on the css target
+            self.assertNotIn("style.css", repo.ctxh("q", "deps", "index.ts").stdout)
+        finally:
+            repo.cleanup()
+
 
 def load_ctxh():
     """The engine as a module, for unit tests of pure helpers."""

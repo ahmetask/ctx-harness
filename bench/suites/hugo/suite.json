@@ -1,0 +1,4 @@
+{
+  "repo": "bench/repos/hugo",
+  "regression": ["go", "build", "./..."]
+}

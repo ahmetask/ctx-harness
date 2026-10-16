@@ -1,0 +1,25 @@
+{
+  "id": "t2-escaped-colons",
+  "category": "bugfix",
+  "prompt": "Bug report: a site escapes literal colons in a permalink pattern with a backslash, e.g. `[permalinks.page]` with `guides = '/docs\\:v2\\:beta/:slug/'`. Only the first colon makes it into the generated URLs (`/docs:v2<NUL>beta/the-slug/`); the second one shows up as a stray control character. Find the cause and fix it. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./resources/page/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./resources/page/"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_colons_test.go": "resources/page/hidden_colons_test.go"
+  },
+  "max_turns": 40
+}

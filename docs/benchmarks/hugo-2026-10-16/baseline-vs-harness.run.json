@@ -1,0 +1,24 @@
+{
+ "run": "20261015-224947-claude",
+ "suite": "hugo",
+ "agent": "claude",
+ "model": null,
+ "repeats": 5,
+ "modes": [
+  "baseline",
+  "harness"
+ ],
+ "tasks": [
+  "t1-locate-permalink-error",
+  "t2-escaped-colons",
+  "t3-strings-reverse",
+  "t4-isoweek-permalink",
+  "t5-locate-pagersize"
+ ],
+ "gates": false,
+ "graphify": null,
+ "started": "2026-10-15T22:49:47",
+ "synthetic": false,
+ "ctx_from": "/home/user/ctx-harness/bench/results/20261015-220103-claude/ctx",
+ "finished": "2026-10-15T23:49:50"
+}

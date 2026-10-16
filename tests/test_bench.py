@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "bench"))
 sys.path.insert(0, str(ROOT / "bench" / "demo"))
 
 import run as bench  # noqa: E402
+from suite import load_suite  # noqa: E402
 from agents import clean_env  # noqa: E402
 from materialize import HISTORY, TEMPLATE, materialize  # noqa: E402
 import sandbox  # noqa: E402
@@ -148,6 +149,34 @@ class DemoAndTasks(unittest.TestCase):
         self.assertEqual([t.id for t in bench.load_tasks("t2,t4-refunds")], ["t2-fixed-coupon-tax", "t4-refunds"])
         with self.assertRaises(SystemExit):
             bench.load_tasks("t99")
+
+
+HUGO = ROOT / "bench" / "repos" / "hugo"
+
+
+@unittest.skipUnless(HAVE_GO and (HUGO / ".git").exists(), "needs Go and the hugo submodule (git submodule update --init --depth 1 bench/repos/hugo)")
+class HugoSuite(unittest.TestCase):
+    """The large-repo suite: each task's hidden check fails on the planted state and passes with its solution."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="ctxh-bench-hugo-"))
+        self.suite = load_suite("hugo")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_every_task_fails_untouched_and_passes_with_its_solution(self):
+        tasks = bench.load_tasks(suite=self.suite)
+        self.assertGreaterEqual(len(tasks), 5)
+        for task in tasks:
+            with self.subTest(task=task.id):
+                before = self.suite.materialize(self.tmp / f"{task.id}-before", task)
+                ok, why = bench.run_check(before, task)
+                self.assertFalse(ok, f"{task.id}: check passes on the untouched repo")
+                after = self.suite.materialize(self.tmp / f"{task.id}-after", task)
+                shutil.copytree(task.solution, after, dirs_exist_ok=True)
+                ok, why = bench.run_check(after, task)
+                self.assertTrue(ok, f"{task.id}: reference solution fails: {why}")
 
 
 @unittest.skipUnless(HAVE_GO, "go not installed")

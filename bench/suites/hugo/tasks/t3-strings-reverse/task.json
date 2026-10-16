@@ -1,0 +1,14 @@
+{
+  "id": "t3-strings-reverse",
+  "category": "cross-module",
+  "prompt": "Add a template function `strings.Reverse` that reverses a string by characters, not bytes, so `{{ strings.Reverse \"héllo\" }}` gives `olléh`. Like the other strings functions it accepts any value that converts to a string and returns an error for one that does not (a slice, for example). It must be available in templates like the existing strings functions, with a documentation example. Keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./tpl/strings/"],
+    ["go", "test", "-count=1", "./tpl/strings/"],
+    ["go", "test", "-count=1", "-run", "TestTemplateFuncsExamples", "./tpl/tplimpl/"]
+  ],
+  "hidden": {
+    "hidden/hidden_reverse_test.go": "tpl/strings/hidden_reverse_test.go"
+  },
+  "max_turns": 40
+}

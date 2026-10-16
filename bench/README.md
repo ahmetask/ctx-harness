@@ -66,6 +66,19 @@ Real runs use `--permission-mode acceptEdits` and allow `Bash`, so the agent can
 
 To change the demo, edit `template/` (the final state). If an edit touches text that a `HISTORY` entry in `materialize.py` mentions, update that entry too. `tests/test_bench.py` checks that the history replays exactly to the template.
 
+## Large-repo suite: Hugo
+
+`--suite hugo` runs 5 tasks on [Hugo](https://github.com/gohugoio/hugo) v0.140.2 (852 Go files), vendored as the git submodule `bench/repos/hugo`:
+
+```bash
+git submodule update --init --depth 1 bench/repos/hugo
+python3 bench/run.py --suite hugo --agent claude --repeats 5 --modes baseline,harness
+```
+
+A suite is a folder `bench/suites/<name>/` with a `suite.json` (submodule path, default regression check, optional `env`) and `tasks/`. Each run clones the submodule at its pinned commit. A task's `setup.patch`, if present, is applied and committed first, which is how the bug in `t2-escaped-colons` is planted. Tasks may set their own `regression` command; the suite default is `go build ./...`. Results for this suite are in `docs/benchmarks/hugo-2026-10-16/` and `docs/benchmark.md`. `tests/test_bench.py::HugoSuite` checks that every task fails untouched and passes with its solution (about 4 minutes; skipped when the submodule is absent).
+
+Disk: Go's build cache grew by roughly 0.5 GB per session in this suite. Clear it (`go clean -cache`) between runs on a small disk, never during one.
+
 ## Tasks
 
 | id | category | what it takes |

@@ -791,7 +791,7 @@ def cmd_build_index(args):
         imports = []
         for spec in specs:
             for target in resolve_import(lang, spec, f, fileset, stem_index, go_module):
-                if target != f and target not in imports:
+                if target != f and target in lang_by_file and target not in imports:  # assets (css, json) are no nodes
                     imports.append(target)
         nodes[f] = {"lang": lang, "role": role, "module": module_of(f, roots), "lines": text.count("\n") + 1,
                     "sha": hashlib.sha1(text.encode()).hexdigest()[:12], "imports": imports,

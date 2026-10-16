@@ -1,0 +1,10 @@
+{
+  "id": "t1-locate-permalink-error",
+  "category": "locate",
+  "prompt": "Question only, do not change any code. When a site's permalink pattern contains a token Hugo does not know (for example `/:slgu/` instead of `/:slug/`), the build stops with the error `permalink attribute not recognised`. Which function creates that error while a pattern is parsed, and in which file does it live? Write the answer to ANSWER.md at the repository root: the file path, the function name and the name of the error value.",
+  "check": [
+    ["grep", "-q", "resources/page/permalinks.go", "ANSWER.md"],
+    ["grep", "-qE", "getOrParsePattern|errPermalinkAttributeUnknown", "ANSWER.md"]
+  ],
+  "max_turns": 25
+}

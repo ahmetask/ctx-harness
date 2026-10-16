@@ -1,0 +1,16 @@
+{
+  "id": "t4-isoweek-permalink",
+  "category": "feature",
+  "prompt": "Add two permalink tokens based on the front matter date: `:isoyear`, the ISO 8601 year as 4 digits, and `:isoweek`, the ISO 8601 week number zero-padded to 2 digits. Near the new year they differ from `:year` (2021-01-03 is week 53 of ISO year 2020). Make them usable in `[permalinks]` site config and document them next to the existing date tokens in the content-management docs. Keep the existing tests passing.",
+  "check": [
+    ["go", "test", "-count=1", "-run", "Hidden", "./resources/page/"],
+    ["go", "test", "-count=1", "./resources/page/"],
+    ["go", "test", "-count=1", "-run", "TestHiddenIsoWeekSite", "./hugolib/"],
+    ["grep", "-q", "isoweek", "docs/content/en/content-management/urls.md"]
+  ],
+  "hidden": {
+    "hidden/hidden_isoweek_test.go": "resources/page/hidden_isoweek_test.go",
+    "hidden/hidden_isoweek_site_test.go": "hugolib/hidden_isoweek_site_test.go"
+  },
+  "max_turns": 50
+}

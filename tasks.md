@@ -42,6 +42,8 @@ Status: `todo` · `planned` · `in progress` · `done` · `dropped`. Priority: P
 | T25 | Usage evidence for pruning learned lines | learning | P3 | done |
 | T26 | User redirects as a learning signal | learning | P3 | done |
 | T27 | Screen shared traces before the curator reads them | learning | P3 | done |
+| T28 | Ask clarifying questions on vague change requests | context | P3 | done |
+| T29 | Large-repo benchmark on Hugo (submodule suite) | measurement | P1 | done |
 
 Suggested order: T21 → T01 → T02 → T03 → T20 (baseline numbers before changing behavior) → T06 → T13 → T15 → T09 → T04 → T05 → T14 → the rest. For T22–T27: T22 → T23 → T24 (uses T22's per-session state) → T25 → T26 → T27.
 
@@ -167,3 +169,8 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 ### T28 · Ask clarifying questions on vague change requests (done)
 - **Problem:** a prompt like "add caching to the api" names an action but not the expected behaviour or how to test it, and agents guess, then rework.
 - **Done when:** `hook-prompt` adds a ~60-token nudge for short change requests that state neither behaviour nor testing (and name no file or symbol): ask 1-3 short questions with suggested defaults if a wrong guess costs rework, else state the assumption. Silent on questions, slash commands, long prompts, "just do it". `CTXH_CLARIFY=0` disables; the protocol has the matching line. Tests cover both paths.
+
+### T29 · Large-repo benchmark on Hugo (done 2026-10-16; see docs/benchmark.md)
+- **Problem:** the 43-file demo repo cannot show whether a map saves search work.
+- **Done:** `--suite hugo` (submodule `bench/repos/hugo`, 5 tasks, hidden tests), 5 repeats of baseline, harness and map-only. Result: cost is a tie; tokens are 10-12% lower, concentrated in multi-file tasks (-26%/-27%); cards add nothing; the one-commit shallow checkout means history signals were not tested. Also fixed a `build-index` crash on imports of non-code files.
+- **Next:** a Hugo checkout with full history, and tasks described by symptom only (no identifiers to grep).

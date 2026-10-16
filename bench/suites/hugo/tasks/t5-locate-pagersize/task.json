@@ -1,0 +1,10 @@
+{
+  "id": "t5-locate-pagersize",
+  "category": "locate",
+  "prompt": "Question only, do not change any code. A site sets only the old key `paginate = 5` in its config and nothing under `[pagination]`. Where does that value become the pager size that `.Paginate` uses, and where does the default of 10 come from when neither key is set? Write the answer to ANSWER.md at the repository root: for both questions the file path and the function or struct involved, and one sentence each.",
+  "check": [
+    ["grep", "-q", "config/allconfig/allconfig.go", "ANSWER.md"],
+    ["grep", "-q", "config/allconfig/alldecoders.go", "ANSWER.md"]
+  ],
+  "max_turns": 25
+}

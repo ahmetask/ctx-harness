@@ -1,0 +1,4 @@
+[submodule "bench/repos/hugo"]
+	path = bench/repos/hugo
+	url = https://github.com/gohugoio/hugo
+	shallow = true
