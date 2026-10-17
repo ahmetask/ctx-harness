@@ -1,5 +1,22 @@
 # Benchmark results
 
+## Slimmer plugin (0.8.0), same symptom-only suite (2026-10-17)
+
+Claude Code's docs say it finds code with agentic search (grep, find, Read) and has no index or repo map, that CLAUDE.md should stay short and leave out what Claude can read from code, and that an existing index can be offered as an MCP tool. Against that, ctx 0.7.0 injected about 3.5k tokens at every session start, and the agent never used the index. Plugin 0.8.0 changes three things: a shorter protocol and a compact map (no derived "depends on" column, co-change list or "Finding things" section; capped lists), cards off by default (the build skill skips them unless asked), and the index offered as an MCP tool, `ctx_query` (`ctxh mcp`, started by the plugin's `.mcp.json`). I did not move the map into CLAUDE.md: both channels end up in the cached prefix, so the size of the payload is what costs, not the channel.
+
+Same suite (`hugo-symptom`, full history), a fresh bootstrap with the new build skill, 5 repeats, baseline vs harness. Raw rows, report and context are in `docs/benchmarks/hugo-symptom-slim-2026-10-17/`.
+
+| arm | pass | total tokens | median uncached | steps (total) | cost |
+|---|---|---|---|---|---|
+| baseline | 25/25 | 6.15M | 14.1k | 145 | $2.23 |
+| harness 0.7.0 (previous run) | 25/25 | 6.55M (+5%) | 17.3k | 139 | $2.57 (+15%) |
+| harness 0.8.0 | 24/25 | 6.22M (+1%) | 16.0k | 149 | $2.37 (+6%) |
+
+- **The overhead halved, but there is still nothing to pay it back.** A trivial session's first turn now writes about 1.9k tokens more than baseline (it was 3.5k). Bootstrap is cheaper too: $0.18 and 17 minutes, against $0.41 and 22 minutes with cards. But the steps saved are gone: 149 steps against 145 for baseline, where 0.7.0 saved 6. Tokens are within noise of baseline (the two baseline runs differ by 1.5%); cost is 6% higher.
+- **The agent still did not use the index.** `ctx_query` is listed as a tool in every harness session, and was called in 0 of 25. The protocol tells it to ask the index first. Claude greps.
+- **One real failure.** In s1 (r1) the agent's fix did not pass the hidden test; its closing message describes a change that differs from the single edit visible in the transcript, so it also changed code through the shell. I did not trace it further. One failure in 25 is not evidence the harness causes failures.
+- **What would change the result:** a task where grep alone burns many steps. The suites so far (greppable, then symptom-only one-line bugs) are all ones where baseline finishes in about 6 steps and 25 seconds, so a map has little to save and a fixed payload cannot pay off.
+
 ## Large repo, symptom-only bug reports, full history (2026-10-16)
 
 Follow-up to the Hugo run below, built to remove its two biggest caveats: the prompts named greppable identifiers, and the checkout had one commit. Same repo and pinned commit (Hugo v0.140.2, 852 Go files), but with full git history (8,752 commits; the miner reads the latest 500, so churn, co-change and owners exist this time), and five new bug-fix tasks in the suite `hugo-symptom` whose prompts describe only what a user sees. Each is a one-line bug planted by `setup.patch` in a different package: group headings merged in a grouped paginator (`resources/page`), `delimit` ignoring its last separator for two items (`tpl/collections`), `absURL ""` losing the base URL's trailing slash (`common/paths`), table-of-contents end level one too low (`markup/tableofcontents`), and an allowlist that drops its last pattern, which blocks `getenv "CI"` (`config/security`). Every task has a hidden test that fails on the planted state and passes with the fix (`tests/test_bench.py::HugoSuite`). 5 repeats, baseline vs harness, plan and review gates off. One bootstrap build ($0.41, 2.1M tokens, 22 minutes), reused for every harness run. Raw rows, reports, the context used and `aggregate.py` are in `docs/benchmarks/hugo-symptom-2026-10-16/`.

@@ -174,4 +174,5 @@ Kiro Crew (`kirodotdev/KiroCrew`) is a persistent agent gateway with its own con
 - **Problem:** the 43-file demo repo cannot show whether a map saves search work.
 - **Done:** `--suite hugo` (submodule `bench/repos/hugo`, 5 tasks, hidden tests), 5 repeats of baseline, harness and map-only. Result: cost is a tie; tokens are 10-12% lower, concentrated in multi-file tasks (-26%/-27%); cards add nothing; the one-commit shallow checkout means history signals were not tested. Also fixed a `build-index` crash on imports of non-code files.
 - **Follow-up done (same day):** suite `hugo-symptom` (full history, five symptom-only planted bugs). Harness tokens +5%, cost +15%, 0 of 25 sessions used `ctxh q`; no saving. Details in docs/benchmark.md.
-- **Next:** harder tasks (cause far from the symptom, regressions in recent history, 15+ files) and an agent told to query the index before searching.
+- **Slimmed plugin (0.8.0, 2026-10-17):** shorter protocol and map, cards optional, `ctx_query` MCP tool. Overhead halved (+1.9k tokens at session start), bootstrap $0.18; still no saving (tokens +1%, cost +6%) and `ctx_query` used in 0 of 25 sessions.
+- **Next:** tasks where baseline burns many steps (cause far from the symptom, regressions in recent history, 15+ files); an index the agent is made to consult (a hook that answers, not a tool it may ignore).
