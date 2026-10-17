@@ -1,0 +1,20 @@
+{
+ "run": "20261017-161035-iterate-claude",
+ "suite": "hugo-iterate",
+ "agent": "claude",
+ "model": null,
+ "repeats": 5,
+ "modes": [
+  "harness"
+ ],
+ "tasks": [
+  "i1-chunk",
+  "i2-chunk-pad",
+  "i3-window",
+  "i4-maps"
+ ],
+ "ctx_from": "/tmp/claude-0/-home-user-ctx-harness/6ee8c00b-9f01-592d-b010-85796edd1a06/scratchpad/ctx",
+ "started": "2026-10-17T16:10:35",
+ "synthetic": false,
+ "finished": "2026-10-17T16:30:23"
+}

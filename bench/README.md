@@ -46,6 +46,10 @@ Optional Graphify arms (`--modes baseline,graphify,harness,harness+graphify`):
 
 Real runs use `--permission-mode acceptEdits` and allow `Bash`, so the agent can run `go test` and `ctxh`. Each run happens in a throwaway directory under the system temp dir. Pass `--keep` to keep the per-run repos for inspection.
 
+## Iterative runs
+
+`bench/iterate.py` runs a chain of dependent tasks in one repo per arm, each task in a new session on the previous one's result (suite `hugo-iterate`; results in `docs/benchmarks/hugo-iterate-2026-10-17/`). The baseline arm has no plugin and no `.ctx/`; the harness arm starts from `--ctx-from` and keeps what earlier sessions leave in `.ctx/`. About $0.12 per session.
+
 ## Agents
 
 | agent | what it does | use |
