@@ -1663,5 +1663,82 @@ class Prompts(unittest.TestCase):
             repo.cleanup()
 
 
+class SlimInjection(unittest.TestCase):
+    """What a session pays for at start, and the index as a tool."""
+
+    MAP = textwrap.dedent("""\
+        # Repo map  <!-- generated @ abc; keep under 60 lines -->
+
+        Stack: go (9). Manifests: a.yml, b.yml, c.yml, d.yml, e.yml.
+        Entry points: m1.go, m2.go, m3.go, m4.go, m5.go.
+        Verified commands: `go test ./...`.
+
+        ## Modules (most central first)
+
+        | module | purpose | key files | depends on |
+        |---|---|---|---|
+        | common | utils | a.go | x, y |
+
+        ## Change together (from git history)
+        - a <-> b (4 commits)
+
+        ## Fragile files (fix/revert history)
+        - f1: Fix a
+        - f2: Fix b
+        - f3: Fix c
+        - f4: Fix d
+
+        ## Finding things
+        - Ask the index first: `ctxh q find <arg>`
+        """)
+
+    def test_compact_map_keeps_what_orients_and_drops_what_the_index_answers(self):
+        out = load_ctxh().compact_map(self.MAP)
+        self.assertIn("| common | utils | a.go |", out)
+        self.assertIn("Stack: go (9). Manifests: a.yml, b.yml, c.yml, +2 more.", out)
+        self.assertIn("Entry points: m1.go, m2.go, m3.go, +2 more.", out)
+        self.assertIn("- f3: Fix c", out)
+        self.assertIn("Verified commands: `go test ./...`.", out)
+        for gone in ("<!--", "depends on", "x, y", "Change together", "Finding things", "d.yml", "f4"):
+            self.assertNotIn(gone, out)
+
+    def test_session_start_names_cards_only_when_there_are_some(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            repo.ctxh("build-index")
+            write(repo.root, ".ctx/map.md", self.MAP)
+            self.assertNotIn("Module cards", repo.ctxh("hook-start", stdin="{}").stdout)
+            write(repo.root, ".ctx/cards/app.md", "---\nmodule: app\nanchors:\n---\nA card.\n")
+            self.assertIn("Module cards:", repo.ctxh("hook-start", stdin="{}").stdout)
+        finally:
+            repo.cleanup()
+
+    def test_mcp_server_lists_one_tool_and_answers_from_the_index(self):
+        repo = Repo()
+        try:
+            python_app(repo)
+            repo.ctxh("build-index")
+            calls = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
+                     {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                     {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                     {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                      "params": {"name": "ctx_query", "arguments": {"kind": "module", "arg": "app"}}},
+                     {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                      "params": {"name": "ctx_query", "arguments": {"kind": "rdeps", "arg": "no/such/file.py"}}},
+                     {"jsonrpc": "2.0", "id": 5, "method": "nope"}]
+            out = repo.ctxh("mcp", stdin="\n".join(json.dumps(c) for c in calls) + "\n").stdout
+            replies = {r["id"]: r for r in map(json.loads, out.splitlines())}
+            self.assertEqual(sorted(replies), [1, 2, 3, 4, 5])  # the notification gets no answer
+            self.assertEqual(replies[1]["result"]["protocolVersion"], "2025-03-26")
+            self.assertEqual([t["name"] for t in replies[2]["result"]["tools"]], ["ctx_query"])
+            self.assertFalse(replies[3]["result"]["isError"])
+            self.assertIn("module app", replies[3]["result"]["content"][0]["text"])
+            self.assertTrue(replies[4]["result"]["isError"])
+            self.assertEqual(replies[5]["error"]["code"], -32601)
+        finally:
+            repo.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

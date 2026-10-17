@@ -1,11 +1,11 @@
 ---
 name: build
-description: Bootstraps ctx-harness repository context (.ctx/) from zero, in any repo and language. Use when the user asks to build, rebuild, or initialize harness context, when the session start says this repo has no harness context and the user wants it, or after large refactors. Deterministic indexing first, LLM only for what code analysis cannot say.
+description: Bootstraps ctx-harness context (.ctx/) in any repo: a deterministic index, then a short map. Use when asked to build, rebuild or initialize harness context, or after large refactors.
 tools: ctxh, read, search
 ---
 # Build repository context
 
-Goal: the smallest context that saves more tokens than it costs. Everything an agent could cheaply rediscover stays out.
+Goal: the smallest context that saves more tokens than it costs. Everything an agent could cheaply rediscover stays out. Sessions pay for the map every time they start, so keep it short.
 
 ## 1. Deterministic index (no LLM tokens)
 Run `ctxh build-index --verify`.
@@ -21,17 +21,17 @@ Run `ctxh skeleton`, then turn `.ctx/map.draft.md` into `.ctx/map.md`:
 - Keep the generated sections. You may drop co-change or fragile lines that are noise, but do not invent new ones.
 - Delete the draft. The map stays under 60 lines because it is injected into every session.
 
-## 3. Cards for central modules only
-Run `ctxh ready` first. It says whether the repo is too small for cards (under 15 source files: the map is enough, skip steps 3 and the probe) and lists the central modules (3+ source files) that still lack a card. Write cards for those, at most 5; each card-writer starts from `ctxh card-draft <module>`, so it only has to add invariants. Invoke the `{{agent:card-writer}}` agent once per module, in parallel when possible. Smaller modules get no card; the index and the code are enough.
+## 3. Cards (optional, off by default)
+Skip this step unless the user asks for cards. On a large repo they measured no better than the map alone, and each is a file-by-file description that costs context every session. If asked: run `ctxh ready` (it lists the central modules with 3+ source files that lack a card), then invoke the `{{agent:card-writer}}` agent once per module, at most 5, in parallel when possible; each starts from `ctxh card-draft <module>` and only adds invariants.
 
 ## 4. Verify and prune
 - Run `ctxh ready` and fix every `FAIL` line (it includes `ctxh check`). Treat each `warn` line as a question to settle, not noise: a `.ctxignore` for fixtures, an unverified test command, an uncommitted `.ctx/`.
-- Probe, only if you wrote cards: write 3 questions a new engineer would ask about this repo whose answers you can confirm with `ctxh q` (where X is enforced, what breaks if Y changes, which tests cover Z). Ask the `{{agent:scout}}` agent each one. Wrong or low-confidence answers point to a missing or misleading card line: fix that line. Remove lines that no probe needed and that only restate code.
+- Only if you wrote cards, probe: write 3 questions a new engineer would ask about this repo whose answers you can confirm with `ctxh q` (where X is enforced, what breaks if Y changes, which tests cover Z). Ask the `{{agent:scout}}` agent each one. Wrong or low-confidence answers point to a missing or misleading card line: fix that line. Remove lines that no probe needed and that only restate code.
 
 ## 5. Permissions and sharing
-{{only:claude}}- If `.claude/settings.json` does not allow `Bash(ctxh *)`, offer to add it under `permissions.allow`, so agents can query the index without an approval prompt each time.
+{{only:claude}}- If `.claude/settings.json` does not allow `Bash(ctxh *)` and `mcp__plugin_ctx-harness_ctx` (the `ctx_query` tool this plugin provides), offer to add them under `permissions.allow`, so agents can query the index without an approval prompt each time.
 {{only:gemini}}- If Gemini CLI asks before each `ctxh` call, offer to add a policy rule (a `.toml` file in `~/.gemini/policies/`: `[[rule]]` with `commandPrefix = "ctxh"`, `decision = "allow"`), so agents can query the index without an approval prompt each time.
 - `.ctx/.gitignore` already excludes derived and per-machine files (graph.json, tmp, traces, metrics). Suggest committing the rest of `.ctx/` so the whole team shares the context. Do not commit unless the user asks.
 
 ## 6. Report
-Summarize with the final `ctxh ready` output: files indexed, verified commands, map line count, cards written, probe results, anything left unverified.
+Summarize with the final `ctxh ready` output: files indexed, verified commands, map line count, anything left unverified (and cards written and probe results, if you wrote any).

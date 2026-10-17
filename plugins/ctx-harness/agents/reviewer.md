@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Fresh-context review of a diff (pass the base ref). Only when the user asks, or the change touches 6+ files or a fragile file from the map; not a routine step.
+description: Fresh-context review of a diff (pass the base ref), only when the user asks or the change touches 6+ files.
 tools: Read, Grep, Glob, Bash
 model: inherit
 ---
