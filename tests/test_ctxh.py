@@ -286,6 +286,31 @@ class CardsAndHooks(unittest.TestCase):
         self.assertIn("Active plan exists: .ctx/tasks/active.md (read it first).", start("startup"))
         self.assertNotIn("progress entries", start("startup"))
 
+    def test_session_start_names_the_previous_sessions_work(self):
+        start = lambda session=None, **kw: self.repo.ctxh(
+            "hook-start", stdin=json.dumps({"session_id": session, **kw})).stdout
+        self.assertNotIn("Previous session", start())
+        traces = self.repo.root / ".ctx" / "traces"
+        traces.mkdir(parents=True, exist_ok=True)
+        (traces / "s1.json").write_text(json.dumps({
+            "session": "s1", "recorded_at": "2026-10-17T10:00:00", "request": "add retry to payments",
+            "files_edited": ["app/common/retry.py", ".ctx/tasks/notes.md"],
+            "failed_commands": [{"cmd": "pytest app/common", "out": "boom"}]}))
+        out = start("s2")
+        self.assertIn("Previous session in this repo (2026-10-17):", out)
+        self.assertIn("- asked: add retry to payments", out)
+        self.assertIn("- edited: app/common/retry.py", out)
+        self.assertNotIn("notes.md\n- failed", out.split("- edited:")[1].split("\n")[0])  # .ctx files are not code
+        self.assertIn("- failed: pytest app/common", out)
+        (traces / "s1.json").write_text(json.dumps({  # edits made through a shell script show up as changed files
+            "session": "s1", "recorded_at": "2026-10-17T10:00:00", "files_edited": [],
+            "files_changed": ["app/common/retry.py"]}))
+        self.assertIn("- edited: app/common/retry.py", start("s2"))
+        self.assertNotIn("Previous session", start("s1"))  # a session never reads its own trace
+        self.assertNotIn("Previous session", start("s2", source="compact"))  # the ledger covers that
+        self.assertNotIn("Previous session", self.repo.ctxh(
+            "hook-start", stdin=json.dumps({"session_id": "s2"}), env={"CTXH_LASTWORK": "0"}).stdout)
+
     def test_disabled_injects_nothing(self):
         out = self.repo.ctxh("hook-start", stdin="{}", env={"CTXH_DISABLED": "1"}).stdout
         self.assertEqual(out, "")

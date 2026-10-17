@@ -1,5 +1,35 @@
 # Benchmark results
 
+## Iterative work: a chain of dependent tasks (2026-10-17)
+
+The earlier suites give every task a fresh repo. Real work is a series: the next task builds on what the last one left. This run chains four feature tasks in Hugo's `tpl/collections` (suite `hugo-iterate`, same pinned v0.140.2), each a separate `claude -p` session on the repo the previous session left, committed in between:
+
+1. add a `chunk` template function (Go method, registration with an example, tests)
+2. give `chunk` an optional pad value
+3. add `window`, sharing chunk's validation code and error messages
+4. make both accept maps, in key order
+
+Each task has a hidden test, and from task 2 on the earlier hidden tests run too (they are removed from the repo after each check, so no session sees them). A failed task would not stop the chain. `python3 bench/iterate.py --suite hugo-iterate --agent claude --ctx-from <dir>`; raw rows, the `.ctx/` used and the fixed-note rerun are in `docs/benchmarks/hugo-iterate-2026-10-17/`.
+
+- **baseline:** plugin off, no `.ctx/` in the repo, no auto-memory. Only the committed code carries from one session to the next.
+- **harness:** plugin 0.8.0 with the repo's map and the five cards from the earlier Hugo build (cards enabled explicitly), `ctx_query` available. What earlier sessions leave in `.ctx/` carries on, and the index is refreshed after each commit. New in this run: at session start the hook adds a note on the previous session in the repo, read from its local trace with no model call: what it was asked, the code files it changed (including edits made through shell scripts, taken from git), the last failed commands, and whether it left coder notes (`CTXH_LASTWORK=0` turns it off).
+
+5 repeats, 4 tasks, both arms, Claude Code's default model, gates off. Sessions cost about $0.12 each.
+
+| arm | pass | total tokens | cost | steps (total) | median seconds/session |
+|---|---|---|---|---|---|
+| baseline | 20/20 | 4.82M | $2.34 | 144 | 39 |
+| harness, first version of the note | 20/20 | 5.32M (+10%) | $2.59 (+11%) | 163 | 53 |
+| harness, note fixed | 20/20 | 5.19M (+8%) | $2.50 (+7%) | 153 | 37 |
+
+Total tokens per step (sum of the 5 repeats): baseline 1225k / 1156k / 1002k / 1436k; harness (fixed note) 1423k / 1093k / 1064k / 1610k. Only step 2 is lower than baseline (-5%); steps 1, 3 and 4 are higher (+16%, +6%, +12%). Single sessions range from 165k to 430k tokens, so these per-step differences are noise.
+
+Reading it:
+- **No saving.** Both arms pass everything, and the harness costs 7-11% more, the same size as the fixed overhead of the injected map seen in the earlier Hugo runs. Having cards plus a note about the last session did not shorten later sessions.
+- **The note was delivered and did not matter.** After the fix it appeared in 15 of 15 sessions that had a predecessor, and the agent still did what baseline does: grep for `Chunk` or `Delimit`, read `collections.go` and `init.go`, edit. `chunk.go`-style code is one grep away, so knowing the last session's file list saves about one search. Nothing in the harness arm called `ctx_query`.
+- **A bug the benchmark found.** The first version of the note named the edited files from the session trace only. The agent edits through `python3 - <<EOF` and `cat >` in Bash, which the trace does not count as edits, so the note was silent in about half of the sessions that should have had it. The plugin now also records the files git sees as changed when the session stops (`files_changed` in the local trace). The "first version" row is the run with that gap; only the harness arm was rerun, since baseline does not depend on it.
+- **Caveats:** one repo, one chain of four small tasks (a session is 4-13 steps for both arms), 5 repeats. The tasks name the files' neighbourhood in plain words ("next to `chunk`"), which makes the last session's work easy to find without help. Cards are stale after the first edit (the session start says so), and nothing refreshed them between sessions because that is the curator's job and costs a model session. A chain where later tasks depend on decisions that are not visible in the code (why a choice was made, a rejected approach) is untested; that is where session notes should matter.
+
 ## Slimmer plugin (0.8.0), same symptom-only suite (2026-10-17)
 
 Claude Code's docs say it finds code with agentic search (grep, find, Read) and has no index or repo map, that CLAUDE.md should stay short and leave out what Claude can read from code, and that an existing index can be offered as an MCP tool. Against that, ctx 0.7.0 injected about 3.5k tokens at every session start, and the agent never used the index. Plugin 0.8.0 changes three things: a shorter protocol and a compact map (no derived "depends on" column, co-change list or "Finding things" section; capped lists), cards off by default (the build skill skips them unless asked), and the index offered as an MCP tool, `ctx_query` (`ctxh mcp`, started by the plugin's `.mcp.json`). I did not move the map into CLAUDE.md: both channels end up in the cached prefix, so the size of the payload is what costs, not the channel.

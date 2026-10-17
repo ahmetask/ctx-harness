@@ -185,6 +185,21 @@ class HugoSuite(unittest.TestCase):
         self.check_suite("hugo-symptom")
 
 
+    def test_hugo_iterate_chain_fails_untouched_and_passes_stage_by_stage(self):
+        import iterate
+        suite = load_suite("hugo-iterate")
+        tasks = bench.load_tasks(suite=suite)
+        self.assertEqual([t.id for t in tasks], ["i1-chunk", "i2-chunk-pad", "i3-window", "i4-maps"])
+        repo = suite.materialize(self.tmp / "chain")
+        for i, task in enumerate(tasks):
+            ok, why = iterate.check_step(repo, tasks, i)
+            self.assertFalse(ok, f"{task.id}: check passes before its solution")
+            shutil.copytree(task.solution, repo, dirs_exist_ok=True)
+            ok, why = iterate.check_step(repo, tasks, i)
+            self.assertTrue(ok, f"{task.id}: reference solution fails: {why}")
+            self.assertFalse(list(repo.glob("tpl/collections/hidden_*")), "hidden tests must not stay in the repo")
+
+
 @unittest.skipUnless(HAVE_GO, "go not installed")
 class EndToEnd(unittest.TestCase):
     def setUp(self):

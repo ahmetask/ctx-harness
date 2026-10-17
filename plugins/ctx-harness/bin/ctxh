@@ -1405,6 +1405,7 @@ def cmd_ready(_):
 # ---------------------------------------------------------------- transcripts, traces, metrics
 REDIRECTS_KEPT = 5    # user prompts that followed a code edit, kept in the local trace
 REDIRECT_CHARS = 200
+REQUEST_CHARS = 240  # the first user prompt of a session, kept in the local trace for the next session start
 
 
 def parse_transcript(path: Path):
@@ -1458,6 +1459,7 @@ def parse_transcript(path: Path):
         "files_read": sorted({rel(p) for p in reads}), "files_edited": sorted({rel(p) for p in edits}),
         "commands": cmds, "failed_commands": failed, "ctx_queries": ctx_q, "ctx_misses": misses,
         "redirects": redirects, "subagents": dict(agents),
+        "request": re.sub(r"\s+", " ", trace["prompts"][0]["text"])[:REQUEST_CHARS] if trace.get("prompts") else "",
         "assistant_messages": trace["assistant_messages"], "usage_messages": len(trace["usage"]),
         "known_tool_calls": len(main) - sum(unknown.values()), "unknown_tools": [n for n, _ in unknown.most_common()],
         "tool_version": trace["tool_version"],
@@ -1516,7 +1518,7 @@ def repo_id():
 
 def shared_trace(trace):
     """What leaves the machine: paths, commands and query strings, never command output (it can hold code)."""
-    out = {k: v for k, v in trace.items() if k not in ("failed_commands", "redirects")}  # what the user typed stays local
+    out = {k: v for k, v in trace.items() if k not in ("failed_commands", "redirects", "request")}  # what the user typed stays local
     out["failed_commands"] = [{"cmd": c["cmd"]} for c in trace.get("failed_commands", [])]
     out["repo"] = repo_id()
     return out
@@ -1608,8 +1610,9 @@ def record(session, data, label, task, tool=None):
         "session", "tool", "label", "task", "recorded_at", "tokens_total", "tokens_uncached", "tokens_main",
         "tokens_sub", "steps", "subagents", "tool_version", "source")})
     if label == "harness":
-        trace = {k: data[k] for k in ("session", "task", "recorded_at", "files_read", "files_edited", "commands",
-                                      "failed_commands", "ctx_queries", "ctx_misses", "redirects", "subagents")}
+        trace = {k: data.get(k) for k in ("session", "task", "recorded_at", "files_read", "files_edited", "commands",
+                                      "failed_commands", "ctx_queries", "ctx_misses", "redirects", "subagents", "request",
+                                      "files_changed")}
         write_json(TRACES / f"{session}.json", trace)
         sink_push(trace)
     for d in (METRICS, TRACES):  # bounded history: keep the newest records only
@@ -2053,6 +2056,34 @@ def global_learned_note():
     return note
 
 
+LAST_WORK_FILES = 8
+
+
+def last_work_note(current=None):
+    """What the previous session in this repo did, or None: its request, the code files it edited, what failed.
+
+    Read from the newest local trace of another session, so it costs no model call. Silent when that session
+    edited no code. CTXH_LASTWORK=0 turns it off."""
+    if env("LASTWORK") == "0" or not TRACES.exists():
+        return None
+    traces = [t for t in (load_json(p) for p in TRACES.glob("*.json")) if t and t.get("session") != current]
+    last = max(traces, key=lambda t: t.get("recorded_at") or "", default=None)
+    seen = ((last or {}).get("files_edited") or []) + ((last or {}).get("files_changed") or [])
+    files = [f for f in dict.fromkeys(seen) if lang_of(f) and not f.startswith(".ctx")]
+    if not files:
+        return None
+    lines = [f"Previous session in this repo ({(last.get('recorded_at') or '')[:10]}):"]
+    if last.get("request"):
+        lines.append(f"- asked: {last['request']}")
+    more = f" (+{len(files) - LAST_WORK_FILES} more)" if len(files) > LAST_WORK_FILES else ""
+    lines.append("- edited: " + ", ".join(files[:LAST_WORK_FILES]) + more)
+    for x in last.get("failed_commands", [])[-2:]:
+        lines.append(f"- failed: {x['cmd'][:100]}")
+    if (CTX / "tasks" / "notes.md").exists():
+        lines.append("- its notes: .ctx/tasks/notes.md")
+    return "\n".join(lines)
+
+
 LEDGER_FILES = 6   # edited files named in the ledger
 LEDGER_FAILS = 3   # failed commands named in the ledger
 
@@ -2166,6 +2197,9 @@ def cmd_hook_start(_):
     learned = global_learned_note()
     if learned:
         out.append(learned)
+    previous = last_work_note(event.get("session"))
+    if previous and event.get("source") not in ("compact", "resume"):
+        out.append(previous)
     if event.get("source") in ("compact", "resume") and event.get("transcript"):
         ledger = session_ledger(event["transcript"])
         if ledger:
@@ -2391,6 +2425,7 @@ def cmd_hook_stop(_):
     if warning:
         warn_once("transcript", warning)
     if data["usage_messages"]:  # a transcript the parser can't read is skipped, not stored as zeros
+        data["files_changed"] = [f for f, _ in changed_code()]  # includes edits made through the shell
         record(session, data, "baseline" if disabled else "harness", env("TASK"))
     if disabled:
         return

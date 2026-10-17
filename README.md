@@ -258,6 +258,7 @@ Curation should follow merges, not run during a task. Options:
 | `CTXH_DISABLED=1` | Harness off for the session: nothing is injected, and the run is recorded as `baseline` |
 | `CTXH_TASK=<name>` | Labels the session's metrics for paired comparisons |
 | `CTXH_CLARIFY=0` | Turn off the clarifying-questions nudge on vague change requests |
+| `CTXH_LASTWORK=0` | Turn off the session-start note on the previous session's request, edited files and failed commands (read from its local trace) |
 | `CTXH_HINTS=0` | Turn off the keyword leads the prompt hook adds to a request |
 | `CTXH_REVIEW_GATE=1` | Opt in: the Stop hook blocks once when code changed and no reviewer ran after the last edit. `CTXH_REVIEW_GATE=0` turns off `ctxh review-check` |
 | `CTXH_PLAN_GATE=1` | Opt in: the Stop hook blocks once when 3+ code files changed with no plan |

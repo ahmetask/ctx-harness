@@ -1,0 +1,31 @@
+{
+  "id": "i4-maps",
+  "category": "feature",
+  "prompt": "Make both `chunk` and `window` accept a map too: they work on the map's values in key order, the same order `sort` and `delimit` use for maps. `{{ chunk 2 (dict \"b\" 2 \"a\" 1 \"c\" 3) }}` returns `[[1 2] [3]]`. Strings, numbers and nil are still errors, with the same message from both functions. Add tests. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./tpl/collections/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./tpl/collections/"
+    ],
+    [
+      "grep",
+      "-q",
+      "\"chunk\"",
+      "tpl/collections/init.go"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_chain4_test.go": "tpl/collections/hidden_chain4_test.go"
+  },
+  "max_turns": 40
+}
