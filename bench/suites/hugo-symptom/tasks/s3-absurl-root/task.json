@@ -1,0 +1,25 @@
+{
+  "id": "s3-absurl-root",
+  "category": "bugfix",
+  "prompt": "Bug report: with `baseURL = 'https://example.org/docs/'`, `{{ absURL \"\" }}` prints `https://example.org/docs` without the trailing slash. It used to keep the slash from the base URL, and links to the site root now 404 behind our proxy. Find the cause and fix it. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./common/paths/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./common/paths/"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_permalink_test.go": "common/paths/hidden_permalink_test.go"
+  },
+  "max_turns": 40
+}

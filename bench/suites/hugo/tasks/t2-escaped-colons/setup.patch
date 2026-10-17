@@ -1,0 +1,13 @@
+diff --git a/resources/page/permalinks.go b/resources/page/permalinks.go
+index ece10bb..24db8c9 100644
+--- a/resources/page/permalinks.go
++++ b/resources/page/permalinks.go
+@@ -116,7 +116,7 @@ func (l PermalinkExpander) normalizeEscapeSequencesIn(s string) (string, bool) {
+ }
+ 
+ func (l PermalinkExpander) normalizeEscapeSequencesOut(result string) string {
+-	return strings.ReplaceAll(result, escapePlaceholderColon, ":")
++	return strings.Replace(result, escapePlaceholderColon, ":", 1)
+ }
+ 
+ // ExpandPattern expands the path in p with the specified expand pattern.

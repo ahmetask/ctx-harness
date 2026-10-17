@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ctx": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/ctxh",
+      "args": ["mcp"]
+    }
+  }
+}

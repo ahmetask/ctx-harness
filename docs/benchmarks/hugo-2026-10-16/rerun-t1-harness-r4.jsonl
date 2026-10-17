@@ -1,0 +1,1 @@
+{"run": "20261016-002127-claude", "task": "t1-locate-permalink-error", "category": "locate", "mode": "harness", "repeat": 0, "passed": true, "check": "", "seconds": 14.6, "error": "", "cost_usd": 0.0746238, "num_turns": 4, "tokens_total": 170823, "tokens_uncached": 13467, "steps": 3, "files_read": 1, "ctx_queries": 0, "subagents": {}, "transcript_ok": true}

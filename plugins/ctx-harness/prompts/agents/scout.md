@@ -1,6 +1,6 @@
 ---
 name: scout
-description: Read-only lookup for a question that would take 5+ file reads ("where is X decided", "what breaks if Y changes"). Returns a short answer with file:line pointers.
+description: Read-only lookup for a question that would take 5+ file reads. Returns a short answer with file:line pointers.
 tools: read, search, shell
 model: fast
 ---

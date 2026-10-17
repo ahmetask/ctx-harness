@@ -21,6 +21,7 @@ a repo opts in by having that directory (the build skill creates it).
   ctxh init --target agents-md|gemini|cursor|aider   point another agent's instructions file at .ctx/
   ctxh review-record [paths]    record that the current content of changed code files was reviewed
   ctxh review-check [--staged | --base REF] [--install-hook]   fail on code changes with no review record
+  ctxh mcp                      stdio MCP server with one tool, ctx_query (the plugin's .mcp.json starts it)
   ctxh version
   ctxh export --tool NAME [--out DIR] [--check]   write an agent's agent/skill files from prompts/
   ctxh hook-start | hook-prompt | hook-stop [--tool NAME]   agent hook entry points
@@ -56,7 +57,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -791,7 +792,7 @@ def cmd_build_index(args):
         imports = []
         for spec in specs:
             for target in resolve_import(lang, spec, f, fileset, stem_index, go_module):
-                if target != f and target not in imports:
+                if target != f and target in lang_by_file and target not in imports:  # assets (css, json) are no nodes
                     imports.append(target)
         nodes[f] = {"lang": lang, "role": role, "module": module_of(f, roots), "lines": text.count("\n") + 1,
                     "sha": hashlib.sha1(text.encode()).hexdigest()[:12], "imports": imports,
@@ -911,7 +912,6 @@ def cmd_skeleton(_):
             out.append(f"- {f}: {files[f]['risk'][0]}{link}")
     out += ["", "## Finding things",
             "- Ask the index first: `ctxh q find|rdeps|impact|cochange|tests|owner|module <arg>`",
-            "- Module cards: `.ctx/cards/<module-with-dashes>.md` (open only for the module you touch)",
             "- Gotchas learned from past tasks: `.ctx/learned.md`"]
     (CTX / "map.draft.md").write_text("\n".join(out) + "\n")
     CARDS.mkdir(parents=True, exist_ok=True)
@@ -1217,6 +1217,12 @@ def index_lag(g):
             and (f in g.get("files", {}) or lang_of(f))]  # deleted files count if they were indexed
 
 
+def name_list(paths, limit=3):
+    """File names for a one-line report: the first few, then how many more."""
+    names = [a.rsplit("/", 1)[-1] for a in paths]
+    return ", ".join(names[:limit]) + (f" (+{len(names) - limit} more)" if len(names) > limit else "")
+
+
 def stale_report(include_index=True):
     lines = []
     g = load_json(GRAPH)
@@ -1236,9 +1242,9 @@ def stale_report(include_index=True):
         if changed or new:
             why = []
             if changed:
-                why.append("changed: " + ", ".join(a.rsplit("/", 1)[-1] for a in changed))
+                why.append("changed: " + name_list(changed))
             if new:
-                why.append("new files: " + ", ".join(a.rsplit("/", 1)[-1] for a in new))
+                why.append("new files: " + name_list(new))
             lines.append(f"stale card {card.name} ({'; '.join(why)})")
     return lines
 
@@ -1362,6 +1368,8 @@ def cmd_ready(_):
             add("ok", f"small repo ({n_src} source files): no cards needed, the map is enough")
         elif not ranked:
             add("ok", "no module has 3+ source files: no cards needed")
+        elif not any(CARDS.glob("*.md")):
+            add("ok", "no cards (optional: measured as no better than the map alone on a large repo)")
         elif missing:
             add("warn", f"central modules without a card: {', '.join(missing)} (one card-writer call each)")
         else:
@@ -2081,6 +2089,46 @@ def session_ledger(path: Path):
     return "\n".join(out)
 
 
+MAP_LIST_ITEMS = 3  # manifests, entry points and bullet lists in the injected map
+
+
+def compact_map(text):
+    """The map as a session sees it: what orients, not what `ctxh q` answers.
+
+    Drops the HTML comment, the module table's derived 'depends on' column, the co-change list and the
+    'Finding things' section (the protocol says it), and caps manifests, entry points and bullet lists.
+    .ctx/map.md itself stays complete for people and for `ctxh check`."""
+    out, section, drop_last = [], "", False
+    kept = 0
+    for line in re.sub(r"\s*<!--.*?-->", "", text.strip()).splitlines():
+        if line.startswith("## "):
+            section, kept, drop_last = line[3:].strip(), 0, False
+        if section.startswith(("Finding things", "Change together")):
+            continue
+        if line.startswith("|"):
+            cells = line.strip().strip("|").split("|")
+            drop_last = drop_last or cells[-1].strip() == "depends on"
+            if drop_last:
+                cells = cells[:-1]
+            line = "|" + "|".join(cells) + "|"
+        elif line.startswith("- "):
+            kept += 1
+            if kept > MAP_LIST_ITEMS:
+                continue
+        elif line.startswith(("Stack:", "Entry points:")):
+            head, sep, manifests = line.partition(" Manifests: ")
+            line = head + (sep + cap_items(manifests) if sep else "")
+            if line.startswith("Entry points:"):
+                line = "Entry points: " + cap_items(line[len("Entry points: "):])
+        out.append(line)
+    return "\n".join(out)
+
+
+def cap_items(items, limit=MAP_LIST_ITEMS):
+    parts = items.rstrip(".").split(", ")
+    return ", ".join(parts[:limit]) + (f", +{len(parts) - limit} more" if len(parts) > limit else "") + ("." if items.endswith(".") else "")
+
+
 def cmd_hook_start(_):
     event = ADAPTER.read_event(sys.stdin) or {}
     if env("DISABLED") == "1":
@@ -2097,7 +2145,9 @@ def cmd_hook_start(_):
     if proto.exists():
         out.append(render_prompt(proto.read_text()).strip())
     if MAP.exists():
-        out.append(MAP.read_text().strip())
+        out.append(compact_map(MAP.read_text()))
+        if any(CARDS.glob("*.md")) if CARDS.exists() else False:
+            out.append("Module cards: `.ctx/cards/<module-with-dashes>.md`; open only the one for the module you change.")
     else:
         out.append(render_prompt("The repo map is missing: run the build skill ({{command:build}}) before non-trivial work."))
     g = load_json(GRAPH)
@@ -2441,6 +2491,58 @@ def cmd_review_check(args):
     sys.exit(1)
 
 
+# ---------------------------------------------------------------- MCP server
+MCP_TOOL = {
+    "name": "ctx_query",
+    "description": "Ask the repo index instead of reading files: find a symbol, rdeps (who imports a file), impact "
+                   "(what a change touches), cochange, tests (covering a file), owner, module (summary), or search "
+                   "(keywords in names and comments). Returns a short list.",
+    "inputSchema": {"type": "object", "properties": {
+        "kind": {"type": "string", "enum": ["find", "search", "rdeps", "deps", "impact", "cochange", "tests",
+                                            "owner", "risk", "module"]},
+        "arg": {"type": "string", "description": "symbol, file path or words"}},
+        "required": ["kind", "arg"]},
+}
+
+
+def mcp_query(kind, arg):
+    """`ctxh q <kind> <arg>` as (text, is_error); a missing index is an answer, not a crash."""
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            cmd_q([str(kind), *str(arg).split()] if kind in ("find", "search") else [str(kind), str(arg)])
+        return buf.getvalue().strip() or "no answer", False
+    except SystemExit as e:
+        return str(e.code if isinstance(e.code, str) else buf.getvalue() or "query failed"), True
+
+
+def cmd_mcp(_):
+    """A stdio MCP server with one tool, ctx_query: the index as a tool the agent lists, not a shell command to remember."""
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        mid, method, params = msg.get("id"), msg.get("method"), msg.get("params") or {}
+        if mid is None:  # notifications need no answer
+            continue
+        reply = {"jsonrpc": "2.0", "id": mid}
+        if method == "initialize":
+            reply["result"] = {"protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                               "capabilities": {"tools": {}}, "serverInfo": {"name": "ctx", "version": VERSION}}
+        elif method == "tools/list":
+            reply["result"] = {"tools": [MCP_TOOL]}
+        elif method == "tools/call" and params.get("name") == MCP_TOOL["name"]:
+            a = params.get("arguments") or {}
+            text, is_error = mcp_query(a.get("kind", ""), a.get("arg", ""))
+            reply["result"] = {"content": [{"type": "text", "text": text}], "isError": is_error}
+        elif method == "ping":
+            reply["result"] = {}
+        else:
+            reply["error"] = {"code": -32601, "message": f"unsupported: {method}"}
+        print(json.dumps(reply), flush=True)
+
+
 def cmd_version(_):
     print(f"ctxh {VERSION} (plugin root: {PLUGIN_ROOT}, repo root: {ROOT}, adapter: {ADAPTER.NAME})")
 
@@ -2450,7 +2552,7 @@ COMMANDS_MAP = {
     "stale": cmd_stale, "check": cmd_check, "ready": cmd_ready, "card-draft": cmd_card_draft, "signals": cmd_signals, "usage": cmd_usage,
     "stats": cmd_stats, "add-command": cmd_add_command, "hook-start": cmd_hook_start, "hook-stop": cmd_hook_stop,
     "hook-prompt": cmd_hook_prompt, "version": cmd_version, "init": cmd_init,
-    "review-record": cmd_review_record, "review-check": cmd_review_check, "export": cmd_export,
+    "review-record": cmd_review_record, "review-check": cmd_review_check, "export": cmd_export, "mcp": cmd_mcp,
 }
 
 if __name__ == "__main__":

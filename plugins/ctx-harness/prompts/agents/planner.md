@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Writes a short plan to .ctx/tasks/active.md. Only when the user asks for a plan, or the design is open and no reasonable default exists; not for requests that already say what to change.
+description: Writes a short plan to .ctx/tasks/active.md, only when the user asks for a plan.
 tools: read, search, shell, write
 model: inherit
 ---

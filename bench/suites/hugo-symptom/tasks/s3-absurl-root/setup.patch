@@ -1,0 +1,13 @@
+diff --git a/common/paths/url.go b/common/paths/url.go
+index 867f68baf..739592b13 100644
+--- a/common/paths/url.go
++++ b/common/paths/url.go
+@@ -76,7 +76,7 @@ func MakePermalink(host, plink string) *url.URL {
+ 	base.RawQuery = p.RawQuery
+ 
+ 	// path.Join will strip off the last /, so put it back if it was there.
+-	hadTrailingSlash := (plink == "" && strings.HasSuffix(host, "/")) || strings.HasSuffix(p.Path, "/")
++	hadTrailingSlash := strings.HasSuffix(p.Path, "/")
+ 	if hadTrailingSlash && !strings.HasSuffix(base.Path, "/") {
+ 		base.Path = base.Path + "/"
+ 	}

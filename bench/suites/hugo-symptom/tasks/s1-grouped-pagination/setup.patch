@@ -1,0 +1,13 @@
+diff --git a/resources/page/pagination.go b/resources/page/pagination.go
+index ea49d62f6..c93c7de72 100644
+--- a/resources/page/pagination.go
++++ b/resources/page/pagination.go
+@@ -256,7 +256,7 @@ func splitPageGroups(pageGroups PagesGroup, size int) []paginatedElement {
+ 
+ 		for k := low; k < high; k++ {
+ 			kp := flattened[k]
+-			if key == nil || key != kp.key {
++			if key == nil {
+ 				key = kp.key
+ 				pg = append(pg, PageGroup{Key: key})
+ 				groupIndex++

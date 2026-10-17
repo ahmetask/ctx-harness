@@ -1,0 +1,13 @@
+diff --git a/config/security/whitelist.go b/config/security/whitelist.go
+index 92eb3102f..0d2f45dc4 100644
+--- a/config/security/whitelist.go
++++ b/config/security/whitelist.go
+@@ -73,7 +73,7 @@ func NewWhitelist(patterns ...string) (Whitelist, error) {
+ 
+ 	var patternsr []*regexp.Regexp
+ 
+-	for i := 0; i < len(patterns); i++ {
++	for i := 0; i < len(patterns)-1; i++ {
+ 		p := strings.TrimSpace(patterns[i])
+ 		if p == "" {
+ 			continue

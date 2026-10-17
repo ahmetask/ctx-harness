@@ -1,0 +1,118 @@
+{
+ "ci_runs": [
+  "go install github.com/magefile/mage@v1.15.0",
+  "pip install docutils",
+  "rst2html --version",
+  "sudo apt-get update -y",
+  "sudo apt-get install -y pandoc",
+  "brew install pandoc",
+  "choco install pandoc",
+  "pandoc -v",
+  "choco install mingw",
+  "echo \"Install Dart Sass version ${SASS_VERSION} ...\"",
+  "curl -LJO \"https://github.com/sass/dart-sass/releases/download/${SASS_VERSION}/dart-sass-${SASS_VERSION}-linux-x64.tar.gz\";",
+  "echo \"${DART_SASS_SHA_LINUX}  dart-sass-${SASS_VERSION}-linux-x64.tar.gz\" | sha256sum -c;",
+  "tar -xvf \"dart-sass-${SASS_VERSION}-linux-x64.tar.gz\";",
+  "echo \"$GOBIN\"",
+  "echo \"$GITHUB_WORKSPACE/dart-sass/\" >> $GITHUB_PATH",
+  "echo \"Install Dart Sass version ${SASS_VERSION} ...\"",
+  "curl -LJO \"https://github.com/sass/dart-sass/releases/download/${SASS_VERSION}/dart-sass-${SASS_VERSION}-macos-x64.tar.gz\";",
+  "echo \"${DART_SASS_SHA_MACOS}  dart-sass-${SASS_VERSION}-macos-x64.tar.gz\" | shasum -a 256 -c;",
+  "tar -xvf \"dart-sass-${SASS_VERSION}-macos-x64.tar.gz\";",
+  "echo \"$GITHUB_WORKSPACE/dart-sass/\" >> $GITHUB_PATH",
+  "echo \"Install Dart Sass version ${env:SASS_VERSION} ...\"",
+  "curl -LJO \"https://github.com/sass/dart-sass/releases/download/${env:SASS_VERSION}/dart-sass-${env:SASS_VERSION}-windows-x64.zip\";",
+  "Expand-Archive -Path \"dart-sass-${env:SASS_VERSION}-windows-x64.zip\" -DestinationPath .;",
+  "echo  \"$env:GITHUB_WORKSPACE/dart-sass/\" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf-8 -Append",
+  "go install honnef.co/go/tools/cmd/staticcheck@latest",
+  "staticcheck ./...",
+  "sass --version;",
+  "mage -v check;",
+  "mage -v test;",
+  "go install -tags extended",
+  "go install"
+ ],
+ "commands": [
+  {
+   "cmd": "staticcheck ./...",
+   "exit": 127,
+   "in_ci": true,
+   "kind": "lint",
+   "seconds": 0.0,
+   "source": "ci",
+   "tail": [
+    "/bin/sh: 1: staticcheck: not found"
+   ],
+   "verified": false
+  },
+  {
+   "cmd": "cd docs && go vet ./...",
+   "exit": 1,
+   "in_ci": false,
+   "kind": "lint",
+   "seconds": 0.0,
+   "source": "docs/go.mod",
+   "tail": [
+    "go: warning: \"./...\" matched no packages",
+    "no packages to vet"
+   ],
+   "verified": false
+  },
+  {
+   "cmd": "go vet ./...",
+   "exit": 0,
+   "in_ci": false,
+   "kind": "lint",
+   "seconds": 299.6,
+   "source": "go.mod",
+   "verified": true
+  },
+  {
+   "cmd": "cd docs && go build ./...",
+   "exit": 0,
+   "in_ci": false,
+   "kind": "build",
+   "seconds": 0.0,
+   "source": "docs/go.mod",
+   "verified": true
+  },
+  {
+   "cmd": "go build ./...",
+   "exit": 0,
+   "in_ci": false,
+   "kind": "build",
+   "seconds": 2.6,
+   "source": "go.mod",
+   "verified": true
+  },
+  {
+   "cmd": "cd docs && go test ./...",
+   "exit": 1,
+   "in_ci": false,
+   "kind": "test",
+   "seconds": 0.0,
+   "source": "docs/go.mod",
+   "tail": [
+    "go: warning: \"./...\" matched no packages",
+    "no packages to test"
+   ],
+   "verified": false
+  },
+  {
+   "cmd": "go test ./...",
+   "exit": 1,
+   "in_ci": false,
+   "kind": "test",
+   "seconds": 187.4,
+   "source": "go.mod",
+   "tail": [
+    "ok  \tgithub.com/gohugoio/hugo/transform/metainject\t0.006s",
+    "ok  \tgithub.com/gohugoio/hugo/transform/urlreplacers\t0.024s",
+    "?   \tgithub.com/gohugoio/hugo/watcher\t[no test files]",
+    "ok  \tgithub.com/gohugoio/hugo/watcher/filenotify\t0.310s",
+    "FAIL"
+   ],
+   "verified": false
+  }
+ ]
+}

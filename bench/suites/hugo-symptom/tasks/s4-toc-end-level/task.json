@@ -1,0 +1,25 @@
+{
+  "id": "s4-toc-end-level",
+  "category": "bugfix",
+  "prompt": "Bug report: the table of contents stops one level too early. With the default settings (start level 2, end level 3) it lists the `##` headings but not the `###` ones, and setting the end level to 4 shows `###` but not `####`. Find the cause and fix it. Keep the existing tests passing.",
+  "check": [
+    [
+      "go",
+      "test",
+      "-count=1",
+      "-run",
+      "Hidden",
+      "./markup/tableofcontents/"
+    ],
+    [
+      "go",
+      "test",
+      "-count=1",
+      "./markup/tableofcontents/"
+    ]
+  ],
+  "hidden": {
+    "hidden/hidden_endlevel_test.go": "markup/tableofcontents/hidden_endlevel_test.go"
+  },
+  "max_turns": 40
+}

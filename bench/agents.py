@@ -25,7 +25,8 @@ CTXH = PLUGIN_DIR / "bin" / "ctxh"
 # Appended to every task prompt in both modes: in -p mode nobody can approve a plan or answer a question.
 HEADLESS_NOTE = ("\n\n(This is a non-interactive run: nobody will answer questions or approve plans. "
                  "Treat any plan as approved and carry the task through to the end.)")
-ALLOWED_TOOLS = ["Bash", "Read", "Edit", "MultiEdit", "Write", "Grep", "Glob", "Task", "Agent", "TodoWrite"]
+ALLOWED_TOOLS = ["Bash", "Read", "Edit", "MultiEdit", "Write", "Grep", "Glob", "Task", "Agent", "TodoWrite",
+                 "mcp__plugin_ctx-harness_ctx"]  # the ctx_query tool of the plugin (no effect without it)
 
 
 @dataclass
